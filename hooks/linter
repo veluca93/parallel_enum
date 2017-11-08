@@ -1,0 +1,33 @@
+#!/bin/bash -e
+
+INCLUDES=$(cat .syntastic_cpp_config)
+EXCLUDE_CHECKS="-misc-unused-parameters"
+
+check_file_clang() {
+  file="${1}"
+  # TODO: add -quiet as soon as it is supported
+  clang-tidy --checks=*,${EXCLUDE_CHECKS} \
+    --warnings-as-errors=*,${EXCLUDE_CHECKS} ${1} \
+    -- -std=c++11 ${INCLUDES}
+}
+
+case "${1}" in
+  --about )
+    echo "Runs a linter on source files"
+    ;;
+  * )
+    for file in `git diff-index --cached --name-only HEAD` ; do
+      if [ -f ${file} ]
+      then
+        if [ ${file: -4} == '.cpp' ]
+        then
+          check_file_clang "${file}"
+        fi
+        if [ ${file: -4} == '.hpp' ]
+        then
+          check_file_clang "${file}"
+        fi
+      fi
+    done
+    ;;
+esac
