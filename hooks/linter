@@ -1,7 +1,7 @@
 #!/bin/bash -e
 
 INCLUDES=$(cat .syntastic_cpp_config)
-EXCLUDE_CHECKS="-misc-unused-parameters"
+EXCLUDE_CHECKS="-misc-unused-parameters,-llvm-header-guard,-cppcoreguidelines-pro-bounds-pointer-arithmetic,-readability-braces-around-statements,-google-readability-braces-around-statements,-google-readability-casting"
 
 check_file_clang() {
   file="${1}"
