@@ -14,7 +14,14 @@ cc_library(
 cc_library(
     name = "graph",
     hdrs = ["graph.hpp"],
-    deps = ["@com_google_absl//absl/container:fixed_array"],
+    deps = [
+        ":binary_search",
+        ":cuckoo",
+        ":fastio",
+        "@com_google_absl//absl/container:fixed_array",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/types:span",
+    ],
 )
 
 cc_library(

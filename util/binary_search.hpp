@@ -14,7 +14,7 @@ class binary_search_t {
   using iterator = const T*;
 
   void init(const std::vector<T>& v) {
-    support.resize(v.size());
+    support = absl::FixedArray<T>(v.size());
     unsigned cnt = 0;
     while (cnt != v.size()) {
       support[cnt] = v[cnt];
