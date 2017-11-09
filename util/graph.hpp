@@ -175,7 +175,7 @@ class fast_graph_t : public graph_t<node_t, label_t> {
 };
 
 template <typename node_t = uint32_t, typename label_t = void,
-          typename Graph = graph_t<node_t, label_t>>
+          typename Graph = fast_graph_t<node_t, label_t>>
 std::unique_ptr<graph_t<node_t, label_t>> ReadOlympiadsFormat(
     FILE* in = stdin, bool directed = false, bool one_based = false) {
   node_t N = fastio::FastRead<node_t>(in);
