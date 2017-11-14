@@ -17,7 +17,7 @@ class Sequential : public Enumerator<Node, Item> {
     };
     if (system->ListRoots(solution_cb)) {
       while (!nodes.empty()) {
-        Node&& node = std::move(nodes.top());
+        Node node = std::move(nodes.top());
         nodes.pop();
         if (!system->ListChildren(node, solution_cb)) {
           break;
