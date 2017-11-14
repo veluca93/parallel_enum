@@ -23,6 +23,11 @@ class CliqueEnumeration
   explicit CliqueEnumeration(graph_t<node_t, label_t>* graph)
       : graph_(graph->Permute(DegeneracyOrder(*graph))) {}
 
+  void SetUp() override {
+    candidates_bitset_.resize(graph_->size());
+    bad_bitset_.resize(graph_->size());
+  }
+
   bool ListRoots(const NodeCallback& cb) override {
     std::pair<std::vector<node_t>, node_t> root;
     for (node_t i = 0; i < graph_->size(); i++) {
@@ -43,6 +48,7 @@ class CliqueEnumeration
                     const NodeCallback& cb) override {
     const std::vector<node_t>& clique = clique_info.first;
     node_t parind = clique_info.second;
+    assert(!clique.empty());
     node_t max_bad = clique.front();
     for (node_t neigh : graph_->fwd_neighs(clique.front())) {
       bool ok = true;
@@ -144,6 +150,7 @@ class CliqueEnumeration
     for (node_t node : candidates_) {
       candidates_bitset_[node] = false;
     }
+    candidates_.clear();
     return go_on;
   }
 

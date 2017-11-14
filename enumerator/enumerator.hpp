@@ -29,21 +29,21 @@ class Enumerator {
   // Call this when the enumeration is done to print statistics.
   void PrintStats(FILE* out = stderr) {
     fprintf(out, "Reading time: %ld ms\n",
-            std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
                 read_done_time_ - start_time_)
                 .count());
     fprintf(out, "Setup time: %ld ms\n",
-            std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
                 run_start_time_ - read_done_time_)
                 .count());
     fprintf(out, "Run time: %ld ms\n",
-            std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
                 run_done_time_ - run_start_time_)
                 .count());
     fprintf(out, "Solutions found: %lu\n", solutions_found_);
     fprintf(out, "Solutions per ms: %f\n",
             (float)solutions_found_ /
-                std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
                     run_done_time_ - run_start_time_)
                     .count());
     PrintStatsInternal();
