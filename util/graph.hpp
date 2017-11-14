@@ -227,7 +227,8 @@ std::unique_ptr<graph_t<node_t, void>> ReadNde(FILE* in = stdin,
     fastio::FastRead<node_t>(in);
   }
   auto labels = graph_internal::ReadLabels<node_t, void>(in, N);
-  auto edges = graph_internal::ReadEdgeList<node_t>(in, directed, false, N);
+  auto edges = graph_internal::ReadEdgeList<node_t>(in, directed,
+                                                    /* one_based = */ false, N);
   return Graph(N, edges, labels);
 }
 
