@@ -2,6 +2,7 @@ package(default_visibility = ["//visibility:public"])
 
 cc_library(
     name = "cuckoo",
+    srcs = ["cuckoo.cpp"],
     hdrs = ["cuckoo.hpp"],
 )
 
@@ -13,12 +14,13 @@ cc_library(
 
 cc_library(
     name = "graph",
+    srcs = ["graph.cpp"],
     hdrs = ["graph.hpp"],
     deps = [
         ":binary_search",
         ":cuckoo",
+        ":dynarray",
         ":fastio",
-        "@com_google_absl//absl/container:fixed_array",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/types:span",
     ],
@@ -26,6 +28,13 @@ cc_library(
 
 cc_library(
     name = "binary_search",
+    srcs = ["binary_search.cpp"],
     hdrs = ["binary_search.hpp"],
-    deps = ["@com_google_absl//absl/container:fixed_array"],
+    deps = [":dynarray"],
+)
+
+cc_library(
+    name = "dynarray",
+    srcs = ["dynarray.cpp"],
+    hdrs = ["dynarray.hpp"],
 )

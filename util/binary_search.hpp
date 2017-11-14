@@ -1,20 +1,21 @@
 #ifndef UTIL_BINARY_SEARCH_H
 #define UTIL_BINARY_SEARCH_H
+#include <cstdint>
 #include <vector>
 
-#include "absl/container/fixed_array.h"
+#include "util/dynarray.hpp"
 
 template <typename T = uint32_t>
 class binary_search_t {
  private:
-  absl::FixedArray<T> support;
+  dynarray<T> support;
 
  public:
-  using data_type = absl::FixedArray<T>&;
+  using data_type = dynarray<T>&;
   using iterator = const T*;
 
   void init(const std::vector<T>& v) {
-    support = absl::FixedArray<T>(v.size());
+    support.resize(v.size());
     unsigned cnt = 0;
     while (cnt != v.size()) {
       support[cnt] = v[cnt];
@@ -33,8 +34,8 @@ class binary_search_t {
   T get_at(size_t idx) const { return support[idx]; }
 
   bool count(T v) const {
-    int64_t n = support.size();
-    int64_t cur = 0;
+    size_t n = support.size();
+    size_t cur = 0;
     while (n > 1) {
       const int64_t half = n / 2;
       cur = support[cur + half] < v ? cur + half : half;
@@ -54,4 +55,10 @@ class binary_search_t {
 
   data_type data() { return support; }
 };
+
+extern template class binary_search_t<int32_t>;
+extern template class binary_search_t<int64_t>;
+extern template class binary_search_t<uint32_t>;
+extern template class binary_search_t<uint64_t>;
+
 #endif  // UTIL_BINARY_SEARCH_H

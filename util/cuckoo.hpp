@@ -3,11 +3,13 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
+#include <stdexcept>
 #include <vector>
 
 #include <immintrin.h>
 
-template <typename T, T missing = -1,
+template <typename T, T missing = T(-1),
 #ifdef __KNC__
           int bucket_size = 64 / sizeof(T)
 #else
@@ -33,18 +35,18 @@ class cuckoo_hash_set {
 
   size_t hash_2(const value_type& k) const { return ~k & mask; }
 
-  void insert(value_type& k, value_type*& table) {
+  void insert(value_type&& k, value_type** table) {
     int h1 = hash_1(k);
     for (int pos = 0; pos < bucket_size; pos++) {
-      if (table[h1 * bucket_size + pos] == missing) {
-        table[h1 * bucket_size + pos] = std::move(k);
+      if ((*table)[h1 * bucket_size + pos] == missing) {
+        (*table)[h1 * bucket_size + pos] = k;
         return;
       }
     }
     int h2 = hash_2(k);
     for (int pos = 0; pos < bucket_size; pos++) {
-      if (table[h2 * bucket_size + pos] == missing) {
-        table[h2 * bucket_size + pos] = std::move(k);
+      if ((*table)[h2 * bucket_size + pos] == missing) {
+        (*table)[h2 * bucket_size + pos] = k;
         return;
       }
     }
@@ -59,41 +61,43 @@ class cuckoo_hash_set {
       }
       int pos = 0;
       for (; pos < bucket_size; pos++) {
-        if (table[hash * bucket_size + pos] == missing) break;
+        if ((*table)[hash * bucket_size + pos] == missing) break;
       }
       if (pos == bucket_size) {
-        cuckooed = std::move(table[hash * bucket_size]);
+        cuckooed = std::move((*table)[hash * bucket_size]);
         pos = 1;
         for (; pos < bucket_size; pos++) {
-          table[hash * bucket_size + pos - 1] =
-              std::move(table[hash * bucket_size + pos]);
+          (*table)[hash * bucket_size + pos - 1] =
+              std::move((*table)[hash * bucket_size + pos]);
         }
-        table[hash * bucket_size + pos - 1] = std::move(k);
+        (*table)[hash * bucket_size + pos - 1] = k;
       } else {
-        cuckooed = std::move(table[hash * bucket_size + pos]);
-        table[hash * bucket_size + pos] = std::move(k);
+        cuckooed = std::move((*table)[hash * bucket_size + pos]);
+        (*table)[hash * bucket_size + pos] = k;
       }
       use_hash_1 = hash == hash_2(cuckooed);
       k = std::move(cuckooed);
       if (k == missing) return;
     }
     rehash(table);
-    insert(k, table);
+    insert(std::move(k), table);
   }
 
-  void rehash(value_type*& table) {
+  void rehash(value_type** table) {
     auto oldmask = mask;
     if (mask == 0)
       mask = 1;
     else
       mask = (mask << 1) | mask;
     pointer newt = 0;
-    posix_memalign((void**)&newt, sizeof(T) * bucket_size,
-                   sizeof(T) * capacity());
+    if (posix_memalign((void**)&newt, sizeof(T) * bucket_size,
+                       sizeof(T) * capacity()) != 0) {
+      throw std::runtime_error("posix_memalign");
+    }
     std::fill(newt, newt + capacity(), missing);
     for (size_t i = 0; i < (oldmask + 1) * bucket_size; i++)
-      if (table[i] != missing) insert(table[i], newt);
-    std::swap(table, newt);
+      if ((*table)[i] != missing) insert(std::move((*table)[i]), &newt);
+    std::swap(*table, newt);
     free(newt);
   }
 
@@ -142,8 +146,10 @@ class cuckoo_hash_set {
 
   cuckoo_hash_set& operator=(const cuckoo_hash_set& other) {
     free(ht);
-    posix_memalign((void**)&ht, sizeof(T) * bucket_size,
-                   sizeof(T) * other.capacity());
+    if (posix_memalign((void**)&ht, sizeof(T) * bucket_size,
+                       sizeof(T) * other.capacity()) != 0) {
+      throw std::runtime_error("posix_memalign");
+    }
     memcpy(ht, other.ht, sizeof(T) * other.capacity());
     mask = other.mask;
     sz = other.sz;
@@ -161,8 +167,10 @@ class cuckoo_hash_set {
     ht = other.ht;
     other.mask = 0;
     other.sz = 0;
-    posix_memalign((void**)&other.ht, sizeof(T) * bucket_size,
-                   sizeof(T) * bucket_size);
+    if (posix_memalign((void**)&other.ht, sizeof(T) * bucket_size,
+                       sizeof(T) * bucket_size) != 0) {
+      std::terminate();
+    }
     return *this;
   }
 
@@ -173,8 +181,10 @@ class cuckoo_hash_set {
   ~cuckoo_hash_set() { free(ht); }
 
   cuckoo_hash_set() : mask(0), sz(0) {
-    posix_memalign((void**)&ht, sizeof(T) * bucket_size,
-                   sizeof(T) * bucket_size);
+    if (posix_memalign((void**)&ht, sizeof(T) * bucket_size,
+                       sizeof(T) * bucket_size) != 0) {
+      throw std::runtime_error("posix_memalign");
+    }
     std::fill(ht, ht + bucket_size, missing);
   }
 
@@ -194,7 +204,14 @@ class cuckoo_hash_set {
     if (count(k)) {
       return;
     }
-    insert(k, ht);
+    insert(std::move(k), &ht);
+    sz++;
+  }
+  void insert(value_type&& k) {
+    if (count(k)) {
+      return;
+    }
+    insert(std::move(k), &ht);
     sz++;
   }
   bool count(const value_type& k) const {
@@ -229,8 +246,10 @@ class cuckoo_hash_set {
     mask++;
     while (mask <= sz / bucket_size) mask <<= 1;
     free(ht);
-    posix_memalign((void**)&ht, sizeof(T) * bucket_size,
-                   sizeof(T) * capacity());
+    if (posix_memalign((void**)&ht, sizeof(T) * bucket_size,
+                       sizeof(T) * capacity()) != 0) {
+      throw std::runtime_error("posix_memalign");
+    }
     std::fill(ht, ht + capacity(), missing);
     mask--;
   }
@@ -257,4 +276,10 @@ class cuckoo_hash_set {
 
   int front() const { return *begin(); }
 };
+
+extern template class cuckoo_hash_set<int32_t>;
+extern template class cuckoo_hash_set<int64_t>;
+extern template class cuckoo_hash_set<uint32_t>;
+extern template class cuckoo_hash_set<uint64_t>;
+
 #endif  // UTIL_CUCKOO_H

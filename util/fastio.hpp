@@ -9,9 +9,6 @@ namespace fastio {
 int64_t ReadInt(FILE* in = stdin);
 
 template <typename T>
-T FastRead(FILE* in = stdin);
-
-template <typename T>
 typename std::enable_if<std::is_integral<T>::value, T>::type FastRead(
     FILE* in) {
   return ReadInt(in);
