@@ -216,6 +216,21 @@ std::unique_ptr<graph_t<node_t, label_t>> ReadOlympiadsFormat(
   return Graph(N, edges, labels);
 }
 
+template <typename node_t = uint32_t,
+          typename Graph = fast_graph_t<node_t, void>>
+std::unique_ptr<graph_t<node_t, void>> ReadNde(FILE* in = stdin,
+                                               bool directed = false) {
+  node_t N = fastio::FastRead<node_t>(in);
+  for (node_t i = 0; i < N; i++) {
+    // Discard degree information
+    fastio::FastRead<node_t>(in);
+    fastio::FastRead<node_t>(in);
+  }
+  auto labels = graph_internal::ReadLabels<node_t, void>(in, N);
+  auto edges = graph_internal::ReadEdgeList<node_t>(in, directed, false, N);
+  return Graph(N, edges, labels);
+}
+
 extern template class graph_t<uint32_t, void>;
 extern template class graph_t<uint32_t, int32_t>;
 extern template class graph_t<uint32_t, int64_t>;
