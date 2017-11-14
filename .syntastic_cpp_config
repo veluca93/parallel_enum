@@ -1,3 +1,4 @@
 -I.
 -Ibazel-genfiles
 -Ibazel-parallel_enum/external/com_google_absl/
+-Ibazel-genfiles/external/com_github_gflags_gflags/include/

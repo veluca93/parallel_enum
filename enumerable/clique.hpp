@@ -23,7 +23,7 @@ class CliqueEnumeration
   explicit CliqueEnumeration(graph_t<node_t, label_t>* graph)
       : graph_(graph->Permute(DegeneracyOrder(*graph))) {}
 
-  void ListRoots(const NodeCallback& cb) override {
+  bool ListRoots(const NodeCallback& cb) override {
     std::pair<std::vector<node_t>, node_t> root;
     for (node_t i = 0; i < graph_->size(); i++) {
       if (graph_->degree(i) == graph_->fwd_degree(i)) {
@@ -31,12 +31,15 @@ class CliqueEnumeration
         root.first.push_back(i);
         root.second = i;
         CompleteFwd(&root.first);
-        cb(root);
+        if (!cb(root)) {
+          return false;
+        }
       }
     }
+    return true;
   }
 
-  void ListChildren(const CliqueEnumerationNode<node_t>& clique_info,
+  bool ListChildren(const CliqueEnumerationNode<node_t>& clique_info,
                     const NodeCallback& cb) override {
     const std::vector<node_t>& clique = clique_info.first;
     node_t parind = clique_info.second;
@@ -58,40 +61,42 @@ class CliqueEnumeration
         max_bad = neigh;
       }
     }
-    Candidates(clique, parind, [this, max_bad, &clique, &cb](node_t cand) {
-      return ChildrenCand(
-          clique, cand,
-          [this, max_bad, cand, &clique, &cb](std::vector<node_t>* child) {
-            node_t idx = child->front();
-            for (node_t node : *child)
-              if (graph_->degree(node) < graph_->degree(idx)) {
-                idx = node;
-              }
-            for (node_t neigh : graph_->neighs(idx)) {
-              bool works = true;
-              for (node_t node : *child) {
-                if (!graph_->are_neighs(neigh, node)) {
-                  works = false;
-                  break;
+    bool ret =
+        Candidates(clique, parind, [this, max_bad, &clique, &cb](node_t cand) {
+          return ChildrenCand(
+              clique, cand,
+              [this, max_bad, cand, &clique, &cb](std::vector<node_t>* child) {
+                node_t idx = child->front();
+                for (node_t node : *child)
+                  if (graph_->degree(node) < graph_->degree(idx)) {
+                    idx = node;
+                  }
+                for (node_t neigh : graph_->neighs(idx)) {
+                  bool works = true;
+                  for (node_t node : *child) {
+                    if (!graph_->are_neighs(neigh, node)) {
+                      works = false;
+                      break;
+                    }
+                  }
+                  if (works) {
+                    if (neigh < clique.front()) return true;
+                    if (neigh <= cand && graph_->are_neighs(neigh, cand))
+                      return true;
+                    if (bad_bitset_[neigh]) return true;
+                  }
                 }
-              }
-              if (works) {
-                if (neigh < clique.front()) return true;
-                if (neigh <= cand && graph_->are_neighs(neigh, cand))
-                  return true;
-                if (bad_bitset_[neigh]) return true;
-              }
-            }
-            std::pair<std::vector<node_t>, node_t> child_info;
-            child_info.second = cand;
-            child->push_back(cand);
-            CompleteFwd(child);
-            child_info.first = *child;
-            return cb(child_info);
-          });
-    });
+                std::pair<std::vector<node_t>, node_t> child_info;
+                child_info.second = cand;
+                child->push_back(cand);
+                CompleteFwd(child);
+                child_info.first = *child;
+                return cb(child_info);
+              });
+        });
     for (node_t b : bad_) bad_bitset_[b] = false;
     bad_.clear();
+    return ret;
   }
 
   Clique<node_t> NodeToItem(
@@ -166,6 +171,19 @@ class CliqueEnumeration
   static thread_local std::vector<node_t> bad_;
   std::unique_ptr<graph_t<node_t, label_t>> graph_;
 };
+
+template <typename node_t, typename label_t>
+thread_local std::vector<bool>
+    CliqueEnumeration<node_t, label_t>::candidates_bitset_;
+template <typename node_t, typename label_t>
+thread_local std::vector<node_t>
+    CliqueEnumeration<node_t, label_t>::candidates_;
+template <typename node_t, typename label_t>
+thread_local std::vector<node_t> CliqueEnumeration<node_t, label_t>::child_;
+template <typename node_t, typename label_t>
+thread_local std::vector<bool> CliqueEnumeration<node_t, label_t>::bad_bitset_;
+template <typename node_t, typename label_t>
+thread_local std::vector<node_t> CliqueEnumeration<node_t, label_t>::bad_;
 
 extern template class CliqueEnumeration<uint32_t, void>;
 extern template class CliqueEnumeration<uint64_t, void>;

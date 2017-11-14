@@ -38,6 +38,7 @@ class label_array_t {
 template <typename node_t>
 class label_array_t<node_t, void> {
  public:
+  explicit label_array_t(node_t size) {}
   void at(node_t pos) const {}
   label_array_t Permute(const std::vector<node_t>& new_order) const {
     return *this;
@@ -45,14 +46,19 @@ class label_array_t<node_t, void> {
 };
 
 template <typename node_t, typename label_t>
-label_array_t<node_t, label_t> ReadLabels(FILE* in, node_t num) {
+typename std::enable_if<!std::is_void<label_t>::value,
+                        label_array_t<node_t, label_t>>::type
+ReadLabels(FILE* in, node_t num) {
   label_array_t<node_t, label_t> labels(num);
   for (node_t i = 0; i < num; i++) labels.at(i) = fastio::FastRead<label_t>(in);
   return labels;
 }
-template <typename node_t>
-label_array_t<node_t, void> ReadLabels(FILE* in, node_t num) {
-  return label_array_t<node_t, void>();
+
+template <typename node_t, typename label_t>
+typename std::enable_if<std::is_void<label_t>::value,
+                        label_array_t<node_t, label_t>>::type
+ReadLabels(FILE* in, node_t num) {
+  return label_array_t<node_t, void>(num);
 }
 
 template <typename node_t>
@@ -206,18 +212,18 @@ class fast_graph_t : public graph_t<node_t, label_t> {
 };
 
 template <typename node_t = uint32_t, typename label_t = void,
-          typename Graph = fast_graph_t<node_t, label_t>>
+          template <typename, typename> class Graph = fast_graph_t>
 std::unique_ptr<graph_t<node_t, label_t>> ReadOlympiadsFormat(
     FILE* in = stdin, bool directed = false, bool one_based = false) {
   node_t N = fastio::FastRead<node_t>(in);
   fastio::FastRead<node_t>(in);
   auto labels = graph_internal::ReadLabels<node_t, label_t>(in, N);
   auto edges = graph_internal::ReadEdgeList<node_t>(in, directed, one_based, N);
-  return Graph(N, edges, labels);
+  return absl::make_unique<Graph<node_t, label_t>>(N, edges, labels);
 }
 
 template <typename node_t = uint32_t,
-          typename Graph = fast_graph_t<node_t, void>>
+          template <typename, typename> class Graph = fast_graph_t>
 std::unique_ptr<graph_t<node_t, void>> ReadNde(FILE* in = stdin,
                                                bool directed = false) {
   node_t N = fastio::FastRead<node_t>(in);
@@ -229,7 +235,7 @@ std::unique_ptr<graph_t<node_t, void>> ReadNde(FILE* in = stdin,
   auto labels = graph_internal::ReadLabels<node_t, void>(in, N);
   auto edges = graph_internal::ReadEdgeList<node_t>(in, directed,
                                                     /* one_based = */ false, N);
-  return Graph(N, edges, labels);
+  return absl::make_unique<Graph<node_t, void>>(N, edges, labels);
 }
 
 extern template class graph_t<uint32_t, void>;

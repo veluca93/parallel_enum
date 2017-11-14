@@ -23,10 +23,10 @@ class Enumerable {
   virtual void CleanUp() {}
 
   // Lists the roots of the enumeration forest.
-  virtual void ListRoots(const NodeCallback& cb) = 0;
+  virtual bool ListRoots(const NodeCallback& cb) = 0;
 
   // Lists the children of a given node.
-  virtual void ListChildren(const Node& node, const NodeCallback& cb) = 0;
+  virtual bool ListChildren(const Node& node, const NodeCallback& cb) = 0;
 
   // Converts an enumeration node into an output item.
   virtual Item NodeToItem(const Node& node) = 0;
