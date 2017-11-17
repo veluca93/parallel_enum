@@ -1,10 +1,13 @@
 #include "absl/memory/memory.h"
 #include "enumerable/clique.hpp"
 #include "enumerator/sequential.hpp"
+#include "enumerator/parallel.hpp"
 #include "gflags/gflags.h"
 
 DEFINE_string(enumerator, "sequential",
-              "which enumerator should be used. Possible values: sequential");
+			  "which enumerator should be used. Possible values: sequential, parallel");
+DEFINE_int32(n, 1, "number of threads to be used for parallel execution");	//TODO: da capire come renderlo valido solo in caso di enumerator=parallel
+
 DEFINE_string(system, "clique",
               "what should be enumerated. Possible values: cliques");
 DEFINE_string(graph_format, "nde",
@@ -18,13 +21,15 @@ DEFINE_bool(one_based, false,
 DEFINE_bool(quiet, false, "do not show any non-fatal output");
 
 bool ValidateEnumerator(const char* flagname, const std::string& value) {
-  if (value == "sequential") {
+  if (value == "sequential" || value == "parallel") {
     return true;
   }
   printf("Invalid value for --%s: %s\n", flagname, value.c_str());
   return false;
 }
 DEFINE_validator(enumerator, &ValidateEnumerator);
+
+
 
 bool ValidateSystem(const char* flagname, const std::string& value) {
   if (value == "clique") {
@@ -67,6 +72,9 @@ template <typename Node, typename Item>
 std::unique_ptr<Enumerator<Node, Item>> MakeEnumerator() {
   if (FLAGS_enumerator == "sequential") {
     return absl::make_unique<Sequential<Node, Item>>();
+  }
+  if (FLAGS_enumerator == "parallel") {
+	return absl::make_unique<Parallel<Node, Item>>(FLAGS_n);
   }
   throw std::runtime_error("Invalid enumerator");
 }

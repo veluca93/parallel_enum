@@ -4,7 +4,7 @@
 #include <chrono>
 #include <cstdio>
 #include <memory>
-
+#include <atomic>
 #include "absl/memory/memory.h"
 #include "enumerable/enumerable.hpp"
 
@@ -27,7 +27,7 @@ class Enumerator {
   }
 
   // Call this when the enumeration is done to print statistics.
-  void PrintStats(FILE* out = stderr) {
+  void PrintStats(FILE* out = stdout) {
     fprintf(out, "Reading time: %ld ms\n",
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 read_done_time_ - start_time_)
@@ -40,7 +40,7 @@ class Enumerator {
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 run_done_time_ - run_start_time_)
                 .count());
-    fprintf(out, "Solutions found: %lu\n", solutions_found_);
+	fprintf(out, "Solutions found: %lu\n", (ssize_t)solutions_found_);
     fprintf(out, "Solutions per ms: %f\n",
             (float)solutions_found_ /
                 std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -61,25 +61,25 @@ class Enumerator {
     cb_ = cb;
   }
 
+  virtual bool ReportSolution(Enumerable<Node, Item>* system,
+							  const Node& node) {
+	solutions_found_++;
+	if (cb_) {
+	  return cb_(system->NodeToItem(node));
+	}
+	return true;
+  }
  protected:
   virtual void RunInternal(Enumerable<Node, Item>* system) = 0;
   virtual void ReadDoneInternal() {}
   virtual void PrintStatsInternal() {}
-  virtual bool ReportSolution(Enumerable<Node, Item>* system,
-                              const Node& node) {
-    solutions_found_++;
-    if (cb_) {
-      return cb_(system->NodeToItem(node));
-    }
-    return true;
-  }
 
   std::function<bool(const Item&)> cb_{nullptr};
   std::chrono::high_resolution_clock::time_point start_time_;
   std::chrono::high_resolution_clock::time_point read_done_time_;
   std::chrono::high_resolution_clock::time_point run_start_time_;
   std::chrono::high_resolution_clock::time_point run_done_time_;
-  std::size_t solutions_found_{0};
+  std::atomic<ssize_t> solutions_found_{0};
 };
 
 #endif  // ENUMERATOR_ENUMERATOR_H

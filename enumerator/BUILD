@@ -14,3 +14,10 @@ cc_library(
     hdrs = ["sequential.hpp"],
     deps = [":enumerator"],
 )
+
+cc_library(
+	name = "parallel",
+	hdrs = ["parallel.hpp"],
+	deps = [":enumerator"],
+	
+)
