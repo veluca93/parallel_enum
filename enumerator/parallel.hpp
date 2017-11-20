@@ -12,7 +12,7 @@ template <typename Node, typename Item>
 
 class Parallel : public Enumerator<Node, Item> {
 
-	/*class WarmupTask : public tbb::task{
+	class WarmupTask : public tbb::task{
 
 	public:
 		WarmupTask(Enumerable<Node, Item>* system) :_system(system){}
@@ -25,7 +25,7 @@ class Parallel : public Enumerator<Node, Item> {
 	private:
 
 		Enumerable<Node, Item>* _system;
-	};*/
+	};
 
 
 	class ParallelTask : public tbb::task {
@@ -52,7 +52,7 @@ class Parallel : public Enumerator<Node, Item> {
 			//get all children of the current node
 			if (_system->ListChildren(_node, solution_cb)) {
 				//if we have children spawn task
-				this->set_ref_count(_nodes.size()+1);	//TODO continuation??
+			this->set_ref_count(_nodes.size()+1);	//TODO continuation??
 				while(!_nodes.empty())
 				{
 					Node node = std::move(_nodes.top());
@@ -69,15 +69,18 @@ class Parallel : public Enumerator<Node, Item> {
 
 
 
+				//TODO: spawnare task con piu' figli tutti assieme...
 
-				//continuation as child genera + task, non so perche'
+
+				//continuation as child (per ridurre il numero di task generati)
 /*
 				if(_nodes.size()==0) return nullptr;
 				int size=_nodes.size();
 
 				Node nodecont = std::move(_nodes.top());
 				_nodes.pop();
-				tbb::task *tcont= new (allocate_continuation()) ParallelTask(_enumerator,_system,nodecont);
+				tbb::empty_task *tcont= new (allocate_continuation()) tbb::empty_task;	//empty task
+				tcont->set_ref_count(size);			//this must be done here!!
 				while(!_nodes.empty())
 				{
 
@@ -85,19 +88,18 @@ class Parallel : public Enumerator<Node, Item> {
 					_nodes.pop();
 
 					//spawn task...
-					tbb::task *t=new (tcont->allocate_child()) ParallelTask(_enumerator,_system,node);
+					ParallelTask *t=new (tcont->allocate_child()) ParallelTask(_enumerator,_system,node);
+					//list.push_back(*t);
 					spawn(*t);
-					//printf("Nodes size: %d (i=%d, size=%d)\n",_nodes.size(),i,size);
-					//sleep(1);
 				}
-				tcont->set_ref_count(size);
+				//spawn(list);
 				//printf("Nodes size: %d\n",_nodes.size());
-				this->_node=nodecont;
+				this->_node= nodecont;
 				recycle_as_child_of(*tcont);
 				return this;
 */
 
-			}
+		}
 
 
 			return nullptr;
@@ -117,6 +119,7 @@ public:
 	Parallel(int nthreads) : _nthreads(nthreads), _task_scheduler(nthreads)
 	{
 		std::cout << "Parallel enumerator: running with " << _nthreads <<" threads."<<std::endl;
+
 	}
 
 protected:
