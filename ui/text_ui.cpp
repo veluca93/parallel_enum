@@ -2,6 +2,7 @@
 #include "enumerable/clique.hpp"
 #include "enumerator/sequential.hpp"
 #include "enumerator/parallel.hpp"
+
 #include "gflags/gflags.h"
 
 DEFINE_string(enumerator, "sequential",
