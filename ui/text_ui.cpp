@@ -1,7 +1,8 @@
 #include "absl/memory/memory.h"
 #include "enumerable/clique.hpp"
 #include "enumerator/sequential.hpp"
-#include "enumerator/parallel.hpp"
+#include "enumerator/parallel_tbb.hpp"
+#include "enumerator/parallel_pthreads.hpp"
 
 #include "gflags/gflags.h"
 
@@ -75,7 +76,7 @@ std::unique_ptr<Enumerator<Node, Item>> MakeEnumerator() {
     return absl::make_unique<Sequential<Node, Item>>();
   }
   if (FLAGS_enumerator == "parallel") {
-	return absl::make_unique<Parallel<Node, Item>>(FLAGS_n);
+    return absl::make_unique<ParallelPthreads<Node, Item>>(FLAGS_n);
   }
   throw std::runtime_error("Invalid enumerator");
 }

@@ -17,7 +17,7 @@ cc_library(
 
 cc_library(
 	name = "parallel",
-	hdrs = ["parallel.hpp"],
+	hdrs = ["parallel_tbb.hpp", "parallel_pthreads.hpp"],
 	deps = [":enumerator"],
 	
 )

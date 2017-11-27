@@ -10,6 +10,7 @@ cc_binary(
 		"//enumerator:parallel",
         "//external:gflags",
         "//util:graph",
+        "//util:concurrentqueue",
         "@com_google_absl//absl/memory",
     ],
 )

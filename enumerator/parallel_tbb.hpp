@@ -1,5 +1,5 @@
-#ifndef PARALLEL_HPP
-#define PARALLEL_HPP
+#ifndef ENUMERATOR_PARALLEL_TBB_H
+#define ENUMERATOR_PARALLEL_TBB_H
 
 #include <iostream>
 #include <vector>
@@ -11,7 +11,7 @@
 
 template <typename Node, typename Item>
 
-class Parallel : public Enumerator<Node, Item> {
+class ParallelTBB : public Enumerator<Node, Item> {
 
 
 	/**
@@ -186,9 +186,9 @@ class Parallel : public Enumerator<Node, Item> {
 
 
 public:
-	Parallel(int nthreads) : _nthreads(nthreads), _task_scheduler(nthreads)
+    ParallelTBB(int nthreads) : _nthreads(nthreads), _task_scheduler(nthreads)
 	{
-		std::cout << "Parallel enumerator: running with " << _nthreads <<" threads."<<std::endl;
+        std::cout << "Parallel enumerator (TBB): running with " << _nthreads <<" threads."<<std::endl;
 
 	}
 
@@ -231,4 +231,4 @@ protected:
 	int _nthreads;									//number of threads used
 	tbb::task_scheduler_init _task_scheduler;		//needed to set par degree
 };
-#endif // PARALLEL_HPP
+#endif // ENUMERATOR_PARALLEL_TBB_H

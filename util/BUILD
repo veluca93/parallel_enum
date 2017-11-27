@@ -1,6 +1,11 @@
 package(default_visibility = ["//visibility:public"])
 
 cc_library(
+    name = "concurrentqueue",
+    hdrs = ["concurrentqueue.hpp"],
+)
+
+cc_library(
     name = "cuckoo",
     srcs = ["cuckoo.cpp"],
     hdrs = ["cuckoo.hpp"],
