@@ -16,9 +16,7 @@ cc_library(
 )
 
 cc_library(
-	name = "parallel",
-	hdrs = ["parallel.hpp"],
-	deps = [":enumerator"],
-	
+    name = "parallel",
+    hdrs = ["parallel.hpp"],
+    deps = [":enumerator"],
 )
-
