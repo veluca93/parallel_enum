@@ -1,10 +1,11 @@
 #ifndef ENUMERATOR_ENUMERATOR_H
 #define ENUMERATOR_ENUMERATOR_H
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <memory>
-#include <atomic>
+
 #include "absl/memory/memory.h"
 #include "enumerable/enumerable.hpp"
 
@@ -40,7 +41,7 @@ class Enumerator {
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 run_done_time_ - run_start_time_)
                 .count());
-	fprintf(out, "Solutions found: %lu\n", (ssize_t)solutions_found_);
+    fprintf(out, "Solutions found: %lu\n", (ssize_t)solutions_found_);
     fprintf(out, "Solutions per ms: %f\n",
             (float)solutions_found_ /
                 std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -55,26 +56,25 @@ class Enumerator {
     Run(absl::make_unique<Enumerable>(args...).get());
   }
 
-  // Sets a function to be called whenever a solution is found. If the function
-  // returns false, enumeration is stopped.
-  void SetItemFoundCallback(const std::function<bool(const Item&)>& cb) {
+  // Sets a function to be called whenever a solution is found.
+  void SetItemFoundCallback(const std::function<void(const Item&)>& cb) {
     cb_ = cb;
   }
 
-  virtual bool ReportSolution(Enumerable<Node, Item>* system,
-							  const Node& node) {
-	solutions_found_++;
-	if (cb_) {
-	  return cb_(system->NodeToItem(node));
-	}
-	return true;
+  virtual void ReportSolution(Enumerable<Node, Item>* system,
+                              const Node& node) {
+    solutions_found_++;
+    if (cb_) {
+      return cb_(system->NodeToItem(node));
+    }
   }
+
  protected:
   virtual void RunInternal(Enumerable<Node, Item>* system) = 0;
   virtual void ReadDoneInternal() {}
   virtual void PrintStatsInternal() {}
 
-  std::function<bool(const Item&)> cb_{nullptr};
+  std::function<void(const Item&)> cb_{nullptr};
   std::chrono::high_resolution_clock::time_point start_time_;
   std::chrono::high_resolution_clock::time_point read_done_time_;
   std::chrono::high_resolution_clock::time_point run_start_time_;

@@ -22,11 +22,14 @@ class Enumerable {
   // clean ups.
   virtual void CleanUp() {}
 
-  // Lists the roots of the enumeration forest.
-  virtual bool ListRoots(const NodeCallback& cb) = 0;
+  // The maximum possible number of roots.
+  virtual size_t MaxRoots() = 0;
+
+  // Gets the i-th root, if it exists.
+  virtual void GetRoot(size_t i, const NodeCallback& cb) = 0;
 
   // Lists the children of a given node.
-  virtual bool ListChildren(const Node& node, const NodeCallback& cb) = 0;
+  virtual void ListChildren(const Node& node, const NodeCallback& cb) = 0;
 
   // Converts an enumeration node into an output item.
   virtual Item NodeToItem(const Node& node) = 0;
