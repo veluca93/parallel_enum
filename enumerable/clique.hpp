@@ -14,13 +14,14 @@ using Clique = std::vector<node_t>;
 template <typename node_t>
 using CliqueEnumerationNode = std::pair<Clique<node_t>, node_t>;
 
-template <typename node_t, typename label_t>
+template <typename Graph>
 class CliqueEnumeration
-    : public Enumerable<CliqueEnumerationNode<node_t>, Clique<node_t>> {
+    : public Enumerable<CliqueEnumerationNode<typename Graph::node_t>, Clique<typename Graph::node_t>> {
  public:
+  using node_t = typename Graph::node_t;
   using NodeCallback = typename Enumerable<CliqueEnumerationNode<node_t>,
                                            Clique<node_t>>::NodeCallback;
-  explicit CliqueEnumeration(graph_t<node_t, label_t>* graph)
+  explicit CliqueEnumeration(Graph* graph)
       : graph_(graph->Permute(DegeneracyOrder(*graph))) {}
 
   void SetUp() override {
@@ -168,23 +169,23 @@ class CliqueEnumeration
   static thread_local std::vector<node_t> child_;
   static thread_local std::vector<bool> bad_bitset_;
   static thread_local std::vector<node_t> bad_;
-  std::unique_ptr<graph_t<node_t, label_t>> graph_;
+  std::unique_ptr<Graph> graph_;
 };
 
-template <typename node_t, typename label_t>
+template <typename Graph>
 thread_local std::vector<bool>
-    CliqueEnumeration<node_t, label_t>::candidates_bitset_;
-template <typename node_t, typename label_t>
-thread_local std::vector<node_t>
-    CliqueEnumeration<node_t, label_t>::candidates_;
-template <typename node_t, typename label_t>
-thread_local std::vector<node_t> CliqueEnumeration<node_t, label_t>::child_;
-template <typename node_t, typename label_t>
-thread_local std::vector<bool> CliqueEnumeration<node_t, label_t>::bad_bitset_;
-template <typename node_t, typename label_t>
-thread_local std::vector<node_t> CliqueEnumeration<node_t, label_t>::bad_;
+    CliqueEnumeration<Graph>::candidates_bitset_;
+template <typename Graph>
+thread_local std::vector<typename Graph::node_t>
+    CliqueEnumeration<Graph>::candidates_;
+template <typename Graph>
+thread_local std::vector<typename Graph::node_t> CliqueEnumeration<Graph>::child_;
+template <typename Graph>
+thread_local std::vector<bool> CliqueEnumeration<Graph>::bad_bitset_;
+template <typename Graph>
+thread_local std::vector<typename Graph::node_t> CliqueEnumeration<Graph>::bad_;
 
-extern template class CliqueEnumeration<uint32_t, void>;
-extern template class CliqueEnumeration<uint64_t, void>;
+extern template class CliqueEnumeration<fast_graph_t<uint32_t, void>>;
+extern template class CliqueEnumeration<fast_graph_t<uint64_t, void>>;
 
 #endif  // ENUMERABLE_CLIQUE_H

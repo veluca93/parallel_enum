@@ -104,10 +104,11 @@ extern template class label_array_t<uint64_t, uint32_t>;
 extern template class label_array_t<uint64_t, uint64_t>;
 }  // namespace graph_internal
 
-template <typename node_t = uint32_t, typename label_t = void>
+template <typename node_t_ = uint32_t, typename label_t = void>
 class graph_t {
  public:
   // TODO(veluca): switch to CSR format?
+  using node_t = node_t_;
   using edges_t = std::vector<std::vector<node_t>>;
   using labels_t = graph_internal::label_array_t<node_t, label_t>;
   using Builder = std::function<std::unique_ptr<graph_t>(node_t, const edges_t&,
@@ -126,36 +127,21 @@ class graph_t {
   node_t fwd_degree(node_t n) const { return fwd_neighs(n).size(); }
   const binary_search_t<node_t>& neighs(node_t i) const { return edges_[i]; }
 
-  virtual const absl::Span<const node_t> fwd_neighs(node_t n) const {
+  const absl::Span<const node_t> fwd_neighs(node_t n) const {
     auto beg = edges_[n].upper_bound(n);
     auto end = edges_[n].end();
     return absl::Span<const node_t>(beg, end - beg);
   }
 
-  virtual bool are_neighs(node_t a, node_t b) const {
+  bool are_neighs(node_t a, node_t b) const {
     return edges_[a].count(b);
   }
 
   /**
    *  Node new_order[i] will go in position i.
    */
-  virtual std::unique_ptr<graph_t> Permute(
+  std::unique_ptr<graph_t> Permute(
       const std::vector<node_t>& new_order) const {
-    return Permute(new_order,
-                   [](node_t n, const edges_t& e, const labels_t& t) {
-                     return absl::make_unique<graph_t>(n, e, t);
-                   });
-  }
-
-  graph_t(const graph_t&) = delete;
-  graph_t(graph_t&&) noexcept = default;
-  graph_t& operator=(const graph_t&) = delete;
-  graph_t& operator=(graph_t&&) = delete;
-  virtual ~graph_t() = default;
-
- protected:
-  std::unique_ptr<graph_t> Permute(const std::vector<node_t>& new_order,
-                                   const Builder& build) const {
     std::vector<node_t> new_pos(size(), -1);
     for (node_t i = 0; i < size(); i++) new_pos[new_order[i]] = i;
     edges_t new_edges(size());
@@ -165,19 +151,27 @@ class graph_t {
       }
       std::sort(new_edges[new_pos[i]].begin(), new_edges[new_pos[i]].end());
     }
-    return build(size(), new_edges, labels_.Permute(new_order));
+    return absl::make_unique<graph_t>(size(), new_edges, labels_.Permute(new_order));
   }
 
+  graph_t(const graph_t&) = delete;
+  graph_t(graph_t&&) noexcept = default;
+  graph_t& operator=(const graph_t&) = delete;
+  graph_t& operator=(graph_t&&) = delete;
+  virtual ~graph_t() = default;
+
+ protected:
   node_t N_;
   std::vector<binary_search_t<node_t>> edges_;
   labels_t labels_;
 };
 
-template <typename node_t = uint32_t, typename label_t = void>
-class fast_graph_t : public graph_t<node_t, label_t> {
-  using base_ = graph_t<node_t, label_t>;
+template <typename node_t_ = uint32_t, typename label_t = void>
+class fast_graph_t : public graph_t<node_t_, label_t> {
+  using base_ = graph_t<node_t_, label_t>;
 
  public:
+  using node_t = node_t_;
   using edges_t = typename base_::edges_t;
   using labels_t = typename base_::labels_t;
   fast_graph_t(node_t N, const edges_t& edg, const labels_t& lbl)
@@ -188,22 +182,28 @@ class fast_graph_t : public graph_t<node_t, label_t> {
     }
   }
 
-  const absl::Span<const node_t> fwd_neighs(node_t n) const override {
+  const absl::Span<const node_t> fwd_neighs(node_t n) const {
     auto beg = fwd_iter_[n];
     auto end = base_::neighs(n).end();
     return absl::Span<const node_t>(beg, end - beg);
   }
 
-  bool are_neighs(node_t a, node_t b) const override {
+  bool are_neighs(node_t a, node_t b) const {
     return edges_[a].count(b);
   }
 
-  std::unique_ptr<base_> Permute(
-      const std::vector<node_t>& new_order) const override {
-    return base_::Permute(new_order, [](node_t n, const edges_t& e,
-                                        const labels_t& t) {
-      return (std::unique_ptr<base_>)absl::make_unique<fast_graph_t>(n, e, t);
-    });
+  std::unique_ptr<fast_graph_t> Permute(
+      const std::vector<node_t>& new_order) const {
+    std::vector<node_t> new_pos(base_::size(), -1);
+    for (node_t i = 0; i < base_::size(); i++) new_pos[new_order[i]] = i;
+    edges_t new_edges(base_::size());
+    for (node_t i = 0; i < base_::size(); i++) {
+      for (node_t x : base_::neighs(i)) {
+        new_edges[new_pos[i]].push_back(new_pos[x]);
+      }
+      std::sort(new_edges[new_pos[i]].begin(), new_edges[new_pos[i]].end());
+    }
+    return absl::make_unique<fast_graph_t>(base_::size(), new_edges, base_::labels_.Permute(new_order));
   }
 
  private:
@@ -213,7 +213,7 @@ class fast_graph_t : public graph_t<node_t, label_t> {
 
 template <typename node_t = uint32_t, typename label_t = void,
           template <typename, typename> class Graph = fast_graph_t>
-std::unique_ptr<graph_t<node_t, label_t>> ReadOlympiadsFormat(
+std::unique_ptr<Graph<node_t, label_t>> ReadOlympiadsFormat(
     FILE* in = stdin, bool directed = false, bool one_based = false) {
   node_t N = fastio::FastRead<node_t>(in);
   fastio::FastRead<node_t>(in);
@@ -224,7 +224,7 @@ std::unique_ptr<graph_t<node_t, label_t>> ReadOlympiadsFormat(
 
 template <typename node_t = uint32_t,
           template <typename, typename> class Graph = fast_graph_t>
-std::unique_ptr<graph_t<node_t, void>> ReadNde(FILE* in = stdin,
+std::unique_ptr<Graph<node_t, void>> ReadNde(FILE* in = stdin,
                                                bool directed = false) {
   node_t N = fastio::FastRead<node_t>(in);
   for (node_t i = 0; i < N; i++) {

@@ -2,7 +2,9 @@
 #include "enumerable/clique.hpp"
 #include "enumerator/sequential.hpp"
 #include "enumerator/parallel_tbb.hpp"
+//#include "enumerator/parallel_pthreads.hpp"
 #include "enumerator/parallel_pthreads_steal.hpp"
+
 
 #include "gflags/gflags.h"
 
@@ -52,19 +54,18 @@ bool ValidateGraphFormat(const char* flagname, const std::string& value) {
 DEFINE_validator(graph_format, &ValidateGraphFormat);
 
 template <typename node_t, typename label_t>
-std::unique_ptr<graph_t<node_t, label_t>> ReadGraph(
+std::unique_ptr<fast_graph_t<node_t, label_t>> ReadFastGraph(
     const std::string& input_file, bool directed = false) {
   FILE* in = fopen(input_file.c_str(), "re");
   if (!in) throw std::runtime_error("Could not open " + input_file);
   if (FLAGS_graph_format == "nde") {
-    return FLAGS_fast_graph ? ReadNde<node_t, fast_graph_t>(in, directed)
-                            : ReadNde<node_t, graph_t>(in, directed);
+    return ReadNde<node_t, fast_graph_t>(in, directed);
   }
   if (FLAGS_graph_format == "oly") {
     return FLAGS_fast_graph
                ? ReadOlympiadsFormat<node_t, label_t, fast_graph_t>(
                      in, directed, FLAGS_one_based)
-               : ReadOlympiadsFormat<node_t, label_t, graph_t>(in, directed,
+               : ReadOlympiadsFormat<node_t, label_t, fast_graph_t>(in, directed,
                                                                FLAGS_one_based);
   }
   throw std::runtime_error("Invalid format");
@@ -85,10 +86,10 @@ template <typename node_t>
 int CliqueMain(const std::string& input_file) {
   auto enumerator =
       MakeEnumerator<CliqueEnumerationNode<node_t>, Clique<node_t>>();
-  auto graph = ReadGraph<node_t, void>(input_file);
+  auto graph = ReadFastGraph<node_t, void>(input_file);
   enumerator->ReadDone();
   enumerator
-      ->template MakeEnumerableSystemAndRun<CliqueEnumeration<node_t, void>>(
+      ->template MakeEnumerableSystemAndRun<CliqueEnumeration<fast_graph_t<node_t, void>>>(
           graph.get());
   if (!FLAGS_quiet) {
     enumerator->PrintStats();
