@@ -5,12 +5,16 @@
 //#include "enumerator/parallel_pthreads.hpp"
 #include "enumerator/parallel_pthreads_steal.hpp"
 
+#ifdef PARALLELENUM_USE_MPI
+#include "enumerator/distributed_mpi.hpp"
+#endif
+
 
 #include "gflags/gflags.h"
 
 DEFINE_string(enumerator, "sequential",
-			  "which enumerator should be used. Possible values: sequential, parallel");
-DEFINE_int32(n, 1, "number of threads to be used for parallel execution");	//TODO: da capire come renderlo valido solo in caso di enumerator=parallel
+              "which enumerator should be used. Possible values: sequential, parallel, distributed");
+DEFINE_int32(n, 1, "number of threads to be used on each computing node");	//TODO: da capire come renderlo valido solo in caso di enumerator=parallel
 
 DEFINE_string(system, "clique",
               "what should be enumerated. Possible values: cliques");
@@ -25,7 +29,7 @@ DEFINE_bool(one_based, false,
 DEFINE_bool(quiet, false, "do not show any non-fatal output");
 
 bool ValidateEnumerator(const char* flagname, const std::string& value) {
-  if (value == "sequential" || value == "parallel") {
+  if (value == "sequential" || value == "parallel" || value == "distributed") {
     return true;
   }
   printf("Invalid value for --%s: %s\n", flagname, value.c_str());
@@ -75,9 +79,16 @@ template <typename Node, typename Item>
 std::unique_ptr<Enumerator<Node, Item>> MakeEnumerator() {
   if (FLAGS_enumerator == "sequential") {
     return absl::make_unique<Sequential<Node, Item>>();
-  }
-  if (FLAGS_enumerator == "parallel") {
+  } else if (FLAGS_enumerator == "parallel") {
     return absl::make_unique<ParallelPthreadsSteal<Node, Item>>(FLAGS_n);
+  } else if (FLAGS_enumerator == "distributed") {
+#ifdef PARALLELENUM_USE_MPI
+    return absl::make_unique<DistributedMPI<Node, Item>>(FLAGS_n);
+#else
+    throw std::runtime_error("To run distributed version, run "
+                             "again the ./build.py script, building the "
+                             "MPI support.");
+#endif
   }
   throw std::runtime_error("Invalid enumerator");
 }

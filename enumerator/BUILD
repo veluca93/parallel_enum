@@ -20,3 +20,10 @@ cc_library(
 	hdrs = ["parallel_tbb.hpp", "parallel_pthreads.hpp", "parallel_pthreads_steal.hpp"],
 	deps = [":enumerator"],
 )
+
+cc_library(
+    name = "distributed",
+    hdrs = ["distributed_mpi.hpp"],
+    deps = [":enumerator",
+            "//third_party/mpi"],
+)

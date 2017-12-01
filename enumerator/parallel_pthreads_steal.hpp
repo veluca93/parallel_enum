@@ -23,8 +23,20 @@ template <typename Node, typename Item>
 class ParallelPthreadsSteal : public Enumerator<Node, Item> {
 private:
     int _nthreads;
+    size_t _minRootId;
+    size_t _maxRootId;
 public:
-    ParallelPthreadsSteal(int nthreads) : _nthreads(nthreads){
+    /**
+     * Roots will be explored in the range [minRootId, maxRootId[
+     * @brief ParallelPthreadsSteal
+     * @param nthreads Number of threads.
+     * @param minRootId Minimum id for roots search.
+     * @param maxRootId Maximum id for roots search.
+     */
+    ParallelPthreadsSteal(int nthreads,
+                          size_t minRootId = 0,
+                          size_t maxRootId = 0):
+        _nthreads(nthreads), _minRootId(minRootId), _maxRootId(maxRootId){
         std::cout << "Parallel enumerator (Pthreads): running with " <<
                      _nthreads << " threads."<< std::endl;
     }
@@ -33,8 +45,11 @@ protected:
     moodycamel::ConcurrentQueue<Node> gnodes(_nthreads*2); // Global nodes
     std::atomic<uint_fast32_t> waiting{0}; // Waiting nodes
     std::atomic<uint_fast32_t> stolen{0}; // Stolen log
-    std::atomic<size_t> nextRoot{0};
     std::atomic<uint_fast32_t> qSize{0}; // Precise size of global queue
+    std::atomic<size_t> nextRoot{_minRootId};
+    if(!_maxRootId){
+        _maxRootId = system->MaxRoots();
+    }
 
       // Thread code
       auto worker_thread = [&](int id) {
@@ -67,7 +82,7 @@ protected:
               bool terminate = false;
               if(rootsAvailable){
                   size_t tmp = nextRoot++;
-                  if(tmp < system->MaxRoots()){
+                  if(tmp < _maxRootId){
                     system->GetRoot(tmp, solution_cb);
                   }else{
                     rootsAvailable = false;
