@@ -28,7 +28,7 @@ class Enumerator {
   }
 
   // Call this when the enumeration is done to print statistics.
-  void PrintStats(FILE* out = stdout) {
+  virtual void PrintStats(FILE* out = stdout) {
     fprintf(out, "Reading time: %ld ms\n",
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 read_done_time_ - start_time_)
@@ -67,6 +67,10 @@ class Enumerator {
     if (cb_) {
       return cb_(system->NodeToItem(node));
     }
+  }
+
+  ssize_t GetSolutionsFound(){
+      return solutions_found_;
   }
 
  protected:

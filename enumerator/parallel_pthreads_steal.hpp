@@ -6,8 +6,6 @@
 #include "enumerator/enumerator.hpp"
 #include "util/concurrentqueue.hpp"
 
-#define STEAL
-
 static void pin(std::thread& t, int i){
   cpu_set_t cpuset;
   CPU_ZERO(&cpuset);
@@ -59,8 +57,6 @@ protected:
           char padding[64];
 
           auto solution_cb = [this, &lnodes, &gnodes, &waiting, &stolen, &qSize, system](const Node& node) {
-#ifdef STEAL
-            //if(waiting){
             if(qSize < waiting){
                 ++qSize;
                 gnodes.enqueue(node);
@@ -70,16 +66,13 @@ protected:
             }else{
                 lnodes.push_back(node);
             }
-#else
-            lnodes.push_back(node);
-#endif
             Enumerator<Node, Item>::ReportSolution(system, node);
             return true;
           };
 
           while (true) {              
               Node node;
-              bool terminate = false;
+              bool nodeSet = false;
               if(rootsAvailable){
                   size_t tmp = nextRoot++;
                   if(tmp < _maxRootId){
@@ -93,34 +86,32 @@ protected:
                 // Pick from local nodes if available
                 node = std::move(lnodes.back());
                 lnodes.pop_back();
+                nodeSet = true;
               }else{
-#ifdef STEAL
                 // Otherwise pick from global nodes
-                bool got = gnodes.try_dequeue(node);
-                if(!got){
+                nodeSet = gnodes.try_dequeue(node);
+                if(!nodeSet){
                   // If no nodes on the global queue, try to steal.
                   ++waiting;
                   do{
                     //std::this_thread::yield();
-                    got = gnodes.try_dequeue(node);
-                  }while(!got && waiting < (uint_fast32_t) _nthreads);
+                    nodeSet = gnodes.try_dequeue(node);
+                  }while(!nodeSet && waiting < (uint_fast32_t) _nthreads);
 
-                  if(got){
+                  if(nodeSet){
                     --waiting;
                     --qSize;
-                  }else{
-                    terminate = true;
                   }
                 }else{
                     --qSize;
                 }
-#else
-                terminate = true;
-#endif
               }
 
-              if (terminate){break;}
-              system->ListChildren(node, solution_cb);
+              if(nodeSet){
+                system->ListChildren(node, solution_cb);
+              }else if(nextRoot >= _maxRootId){
+                  break;
+              }
           }
       };
       // Start and wait threads

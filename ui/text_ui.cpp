@@ -4,11 +4,9 @@
 #include "enumerator/parallel_tbb.hpp"
 //#include "enumerator/parallel_pthreads.hpp"
 #include "enumerator/parallel_pthreads_steal.hpp"
-
 #ifdef PARALLELENUM_USE_MPI
 #include "enumerator/distributed_mpi.hpp"
 #endif
-
 
 #include "gflags/gflags.h"
 

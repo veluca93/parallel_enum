@@ -275,9 +275,9 @@ def main():
   if environ_cp.get('PE_NEED_MPI') == '1':
     set_mpi_home(environ_cp)
     set_other_mpi_vars(environ_cp)
+    os.environ['CXX'] = 'mpicxx'
 
 if __name__ == '__main__':
   main()
-  os.environ['CXX'] = 'mpicxx'
-  os.system("bazel build  --cxxopt=\"-O3\" --cxxopt=\"-DOMPI_SKIP_MPICXX\" //ui:text_ui")
+  os.system("bazel build  --cxxopt=\"-O3\" --cxxopt=\"-DOMPI_SKIP_MPICXX\"  //ui:text_ui")
   

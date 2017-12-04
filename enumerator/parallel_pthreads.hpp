@@ -2,11 +2,8 @@
 #define ENUMERATOR_PARALLEL_PTHREADS_H
 
 #include <vector>
-
 #include "enumerator/enumerator.hpp"
 #include "util/concurrentqueue.hpp"
-
-#define STEAL
 
 static void pin(std::thread& t, int i){
   cpu_set_t cpuset;
@@ -23,15 +20,30 @@ template <typename Node, typename Item>
 class ParallelPthreads : public Enumerator<Node, Item> {
 private:
     int _nthreads;
+    size_t _minRootId;
+    size_t _maxRootId;
 public:
-    ParallelPthreads(int nthreads) : _nthreads(nthreads){
+    /**
+     * Roots will be explored in the range [minRootId, maxRootId[
+     * @brief ParallelPthreadsSteal
+     * @param nthreads Number of threads.
+     * @param minRootId Minimum id for roots search.
+     * @param maxRootId Maximum id for roots search.
+     */
+    ParallelPthreads(int nthreads,
+                     size_t minRootId = 0,
+                     size_t maxRootId = 0):
+        _nthreads(nthreads), _minRootId(minRootId), _maxRootId(maxRootId){
         std::cout << "Parallel enumerator (Pthreads): running with " <<
                      _nthreads << " threads."<< std::endl;
     }
 protected:
   void RunInternal(Enumerable<Node, Item>* system) override {
     moodycamel::ConcurrentQueue<Node> gnodes; // Global nodes
-    std::atomic<size_t> nextRoot{0};
+    std::atomic<size_t> nextRoot{_minRootId};
+    if(!_maxRootId){
+        _maxRootId = system->MaxRoots();
+    }
 
       // Thread code
       auto worker_thread = [&](int id) {
@@ -48,24 +60,22 @@ protected:
           };
 
           while (true) {              
-              Node node;
-              bool terminate = false;
-              if(rootsAvailable){
-                  size_t tmp = nextRoot++;
-                  if(tmp < system->MaxRoots()){
-                    system->GetRoot(tmp, solution_cb);
-                  }else{
-                    rootsAvailable = false;
-                  }
+          Node node;
+          if(rootsAvailable){
+              size_t tmp = nextRoot++;
+              if(tmp < _maxRootId){
+                system->GetRoot(tmp, solution_cb);
+              }else{
+                rootsAvailable = false;
               }
+          }
 
-                if(!gnodes.try_dequeue_from_producer(ptok, node) &&
-                   !gnodes.try_dequeue(ctok, node)){
-                    terminate = true;
-                }
-
-              if (terminate){break;}
-              system->ListChildren(node, solution_cb);
+            if(gnodes.try_dequeue_from_producer(ptok, node) ||
+               gnodes.try_dequeue(ctok, node)){
+                system->ListChildren(node, solution_cb);
+            }else if(nextRoot >= _maxRootId){
+                break;
+            }
           }
       };
       // Start and wait threads

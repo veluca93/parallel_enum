@@ -24,6 +24,6 @@ cc_library(
 cc_library(
     name = "distributed",
     hdrs = ["distributed_mpi.hpp"],
-    deps = [":enumerator",
+    deps = [":enumerator", ":parallel",
             "//third_party/mpi"],
 )
