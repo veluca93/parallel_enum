@@ -1,7 +1,9 @@
 #ifndef ENUMERATOR_PARALLEL_PTHREADS_H
 #define ENUMERATOR_PARALLEL_PTHREADS_H
 
+#include <iostream>
 #include <vector>
+
 #include "enumerator/enumerator.hpp"
 #include "util/concurrentqueue.hpp"
 
@@ -82,7 +84,9 @@ protected:
       std::vector<std::thread> threads;
       for (int i = 0; i < _nthreads; i++){
           threads.emplace_back(std::bind(worker_thread, i));
+#ifndef PARALLEL_NOPIN
           pin(threads.back(), i);
+#endif
       }
       for (int i = 0; i < _nthreads; i++)
           threads[i].join();

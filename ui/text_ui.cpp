@@ -9,10 +9,12 @@
 #endif
 
 #include "gflags/gflags.h"
+#include <thread>
 
 DEFINE_string(enumerator, "sequential",
               "which enumerator should be used. Possible values: sequential, parallel, distributed");
-DEFINE_int32(n, 1, "number of threads to be used on each computing node");	//TODO: da capire come renderlo valido solo in caso di enumerator=parallel
+DEFINE_int32(n, std::thread::hardware_concurrency(), "number of threads to be used on each computing node "
+             "(default: number of available cores)");	//TODO: da capire come renderlo valido solo in caso di enumerator=parallel
 
 DEFINE_string(system, "clique",
               "what should be enumerated. Possible values: cliques");
