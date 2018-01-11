@@ -1,23 +1,31 @@
 #include "absl/memory/memory.h"
+#include "enumerable/ckplex.hpp"
 #include "enumerable/clique.hpp"
-#include "enumerator/sequential.hpp"
 #include "enumerator/parallel_tbb.hpp"
+#include "enumerator/sequential.hpp"
 //#include "enumerator/parallel_pthreads.hpp"
 #include "enumerator/parallel_pthreads_steal.hpp"
 #ifdef PARALLELENUM_USE_MPI
 #include "enumerator/distributed_mpi.hpp"
 #endif
 
-#include "gflags/gflags.h"
 #include <thread>
+#include "gflags/gflags.h"
 
 DEFINE_string(enumerator, "sequential",
-              "which enumerator should be used. Possible values: sequential, parallel, distributed");
-DEFINE_int32(n, std::thread::hardware_concurrency(), "number of threads to be used on each computing node "
-             "(default: number of available cores)");	//TODO: da capire come renderlo valido solo in caso di enumerator=parallel
+              "which enumerator should be used. Possible values: sequential, "
+              "parallel, distributed");
+DEFINE_int32(
+    n, std::thread::hardware_concurrency(),
+    "number of threads to be used on each computing node "
+    "(default: number of available cores)");  // TODO: da capire come
+                                              // renderlo valido solo in
+                                              // caso di
+                                              // enumerator=parallel
+DEFINE_int32(k, 2, "value of k for the k-plexes");
 
 DEFINE_string(system, "clique",
-              "what should be enumerated. Possible values: cliques");
+              "what should be enumerated. Possible values: clique, ckplex");
 DEFINE_string(graph_format, "nde",
               "format of input graphs. Only makes sense for systems defined on "
               "graphs. Possible values: nde, oly");
@@ -37,10 +45,8 @@ bool ValidateEnumerator(const char* flagname, const std::string& value) {
 }
 DEFINE_validator(enumerator, &ValidateEnumerator);
 
-
-
 bool ValidateSystem(const char* flagname, const std::string& value) {
-  if (value == "clique") {
+  if (value == "clique" || value == "ckplex") {
     return true;
   }
   printf("Invalid value for --%s: %s\n", flagname, value.c_str());
@@ -69,8 +75,8 @@ std::unique_ptr<fast_graph_t<node_t, label_t>> ReadFastGraph(
     return FLAGS_fast_graph
                ? ReadOlympiadsFormat<node_t, label_t, fast_graph_t>(
                      in, directed, FLAGS_one_based)
-               : ReadOlympiadsFormat<node_t, label_t, fast_graph_t>(in, directed,
-                                                               FLAGS_one_based);
+               : ReadOlympiadsFormat<node_t, label_t, fast_graph_t>(
+                     in, directed, FLAGS_one_based);
   }
   throw std::runtime_error("Invalid format");
 }
@@ -85,9 +91,10 @@ std::unique_ptr<Enumerator<Node, Item>> MakeEnumerator() {
 #ifdef PARALLELENUM_USE_MPI
     return absl::make_unique<DistributedMPI<Node, Item>>(FLAGS_n);
 #else
-    throw std::runtime_error("To run distributed version, run "
-                             "again the ./build.py script, building the "
-                             "MPI support.");
+    throw std::runtime_error(
+        "To run distributed version, run "
+        "again the ./build.py script, building the "
+        "MPI support.");
 #endif
   }
   throw std::runtime_error("Invalid enumerator");
@@ -99,9 +106,22 @@ int CliqueMain(const std::string& input_file) {
       MakeEnumerator<CliqueEnumerationNode<node_t>, Clique<node_t>>();
   auto graph = ReadFastGraph<node_t, void>(input_file);
   enumerator->ReadDone();
-  enumerator
-      ->template MakeEnumerableSystemAndRun<CliqueEnumeration<fast_graph_t<node_t, void>>>(
-          graph.get());
+  enumerator->template MakeEnumerableSystemAndRun<
+      CliqueEnumeration<fast_graph_t<node_t, void>>>(graph.get());
+  if (!FLAGS_quiet) {
+    enumerator->PrintStats();
+  }
+  return 0;
+}
+
+template <typename node_t>
+int CKplexMain(const std::string& input_file) {
+  auto enumerator =
+      MakeEnumerator<CKplexEnumerationNode<node_t>, CKplex<node_t>>();
+  auto graph = ReadFastGraph<node_t, void>(input_file);
+  enumerator->ReadDone();
+  enumerator->template MakeEnumerableSystemAndRun<
+      CKplexEnumeration<fast_graph_t<node_t, void>>>(graph.get(), FLAGS_k);
   if (!FLAGS_quiet) {
     enumerator->PrintStats();
   }
@@ -116,10 +136,18 @@ int main(int argc, char** argv) {
   gflags::ParseCommandLineFlags(&argc, &argv, true);
   if (FLAGS_system == "clique") {
     if (argc != 2) {
-      fprintf(stderr, "You should specify exactly one graph");
+      fprintf(stderr, "You should specify exactly one graph\n");
       return 1;
     }
     return FLAGS_huge_graph ? CliqueMain<uint64_t>(argv[1])
                             : CliqueMain<uint32_t>(argv[1]);
+  }
+  if (FLAGS_system == "ckplex") {
+    if (argc != 2) {
+      fprintf(stderr, "You should specify exactly one graph\n");
+      return 1;
+    }
+    return FLAGS_huge_graph ? CKplexMain<uint64_t>(argv[1])
+                            : CKplexMain<uint32_t>(argv[1]);
   }
 }

@@ -3,6 +3,7 @@
 
 #include <functional>
 #include <memory>
+#include <numeric>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -133,15 +134,12 @@ class graph_t {
     return absl::Span<const node_t>(beg, end - beg);
   }
 
-  bool are_neighs(node_t a, node_t b) const {
-    return edges_[a].count(b);
-  }
+  bool are_neighs(node_t a, node_t b) const { return edges_[a].count(b); }
 
   /**
    *  Node new_order[i] will go in position i.
    */
-  std::unique_ptr<graph_t> Permute(
-      const std::vector<node_t>& new_order) const {
+  std::unique_ptr<graph_t> Permute(const std::vector<node_t>& new_order) const {
     std::vector<node_t> new_pos(size(), -1);
     for (node_t i = 0; i < size(); i++) new_pos[new_order[i]] = i;
     edges_t new_edges(size());
@@ -151,7 +149,14 @@ class graph_t {
       }
       std::sort(new_edges[new_pos[i]].begin(), new_edges[new_pos[i]].end());
     }
-    return absl::make_unique<graph_t>(size(), new_edges, labels_.Permute(new_order));
+    return absl::make_unique<graph_t>(size(), new_edges,
+                                      labels_.Permute(new_order));
+  }
+
+  std::unique_ptr<graph_t> Clone() const {
+    std::vector<node_t> identity(size());
+    std::iota(identity.begin(), identity.end(), 0);
+    return Permute(identity);
   }
 
   graph_t(const graph_t&) = delete;
@@ -188,9 +193,7 @@ class fast_graph_t : public graph_t<node_t_, label_t> {
     return absl::Span<const node_t>(beg, end - beg);
   }
 
-  bool are_neighs(node_t a, node_t b) const {
-    return edges_[a].count(b);
-  }
+  bool are_neighs(node_t a, node_t b) const { return edges_[a].count(b); }
 
   std::unique_ptr<fast_graph_t> Permute(
       const std::vector<node_t>& new_order) const {
@@ -203,7 +206,14 @@ class fast_graph_t : public graph_t<node_t_, label_t> {
       }
       std::sort(new_edges[new_pos[i]].begin(), new_edges[new_pos[i]].end());
     }
-    return absl::make_unique<fast_graph_t>(base_::size(), new_edges, base_::labels_.Permute(new_order));
+    return absl::make_unique<fast_graph_t>(base_::size(), new_edges,
+                                           base_::labels_.Permute(new_order));
+  }
+
+  std::unique_ptr<fast_graph_t> Clone() const {
+    std::vector<node_t> identity(base_::size());
+    std::iota(identity.begin(), identity.end(), 0);
+    return Permute(identity);
   }
 
  private:
@@ -225,7 +235,7 @@ std::unique_ptr<Graph<node_t, label_t>> ReadOlympiadsFormat(
 template <typename node_t = uint32_t,
           template <typename, typename> class Graph = fast_graph_t>
 std::unique_ptr<Graph<node_t, void>> ReadNde(FILE* in = stdin,
-                                               bool directed = false) {
+                                             bool directed = false) {
   node_t N = fastio::FastRead<node_t>(in);
   for (node_t i = 0; i < N; i++) {
     // Discard degree information

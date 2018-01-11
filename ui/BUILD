@@ -12,13 +12,14 @@ cc_binary(
     srcs = ["text_ui.cpp"],
     defines = MPI_DEFINES,
     deps = [
+        "//enumerable:ckplex",
         "//enumerable:clique",
-        "//enumerator:sequential",
-		"//enumerator:parallel",
         "//enumerator:distributed",
+        "//enumerator:parallel",
+        "//enumerator:sequential",
         "//external:gflags",
-        "//util:graph",
         "//util:concurrentqueue",
+        "//util:graph",
         "@com_google_absl//absl/memory",
     ],
 )

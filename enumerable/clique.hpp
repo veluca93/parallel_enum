@@ -16,7 +16,8 @@ using CliqueEnumerationNode = std::pair<Clique<node_t>, node_t>;
 
 template <typename Graph>
 class CliqueEnumeration
-    : public Enumerable<CliqueEnumerationNode<typename Graph::node_t>, Clique<typename Graph::node_t>> {
+    : public Enumerable<CliqueEnumerationNode<typename Graph::node_t>,
+                        Clique<typename Graph::node_t>> {
  public:
   using node_t = typename Graph::node_t;
   using NodeCallback = typename Enumerable<CliqueEnumerationNode<node_t>,
@@ -173,13 +174,13 @@ class CliqueEnumeration
 };
 
 template <typename Graph>
-thread_local std::vector<bool>
-    CliqueEnumeration<Graph>::candidates_bitset_;
+thread_local std::vector<bool> CliqueEnumeration<Graph>::candidates_bitset_;
 template <typename Graph>
 thread_local std::vector<typename Graph::node_t>
     CliqueEnumeration<Graph>::candidates_;
 template <typename Graph>
-thread_local std::vector<typename Graph::node_t> CliqueEnumeration<Graph>::child_;
+thread_local std::vector<typename Graph::node_t>
+    CliqueEnumeration<Graph>::child_;
 template <typename Graph>
 thread_local std::vector<bool> CliqueEnumeration<Graph>::bad_bitset_;
 template <typename Graph>

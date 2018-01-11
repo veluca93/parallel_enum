@@ -15,3 +15,24 @@ cc_library(
         "//util:graph",
     ],
 )
+
+cc_library(
+    name = "commutable",
+    hdrs = ["commutable.hpp"],
+    deps = [
+        ":enumerable",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+cc_library(
+    name = "ckplex",
+    srcs = ["ckplex.cpp"],
+    hdrs = ["ckplex.hpp"],
+    deps = [
+        ":commutable",
+        ":enumerable",
+        "//permute",
+        "//util:graph",
+    ],
+)
