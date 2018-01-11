@@ -5,6 +5,7 @@
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <queue>
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
@@ -14,13 +15,23 @@
 #include "enumerable/enumerable.hpp"
 #include "util/graph.hpp"
 
+template <class T, class S, class C>
+void clearpq(std::priority_queue<T, S, C>& q) {
+  struct HackedQueue : private std::priority_queue<T, S, C> {
+    static S& Container(std::priority_queue<T, S, C>& q) {
+      return q.*&HackedQueue::c;
+    }
+  };
+  HackedQueue::Container(q).clear();
+}
+
 template <typename node_t>
 using CommutableItem = std::vector<node_t>;
 
 template <typename node_t>
 using CommutableNode = std::pair<CommutableItem<node_t>, std::vector<int32_t>>;
 
-template <typename Graph>
+template <typename Graph, typename Aux = int32_t>
 class CommutableSystem
     : public Enumerable<CommutableNode<typename Graph::node_t>,
                         CommutableItem<typename Graph::node_t>> {
@@ -73,7 +84,7 @@ class CommutableSystem
   /**
    * Checks if we can add a given element to a solution
    */
-  virtual bool CanAdd(const std::vector<node_t>& s, node_t v) {
+  virtual bool CanAdd(const std::vector<node_t>& s, Aux& aux, node_t v) {
     auto cnd = s;
     cnd.push_back(v);
     return IsGood(cnd);
@@ -125,20 +136,26 @@ class CommutableSystem
     }
   }
 
+  using CandEl = std::pair<int32_t, node_t>;
+  using CandSet =
+      std::priority_queue<CandEl, std::vector<CandEl>, std::greater<CandEl>>;
+
+  virtual Aux InitAux(const std::vector<node_t>& s) { return {}; }
+
+  virtual void UpdateAux(Aux& aux, const std::vector<node_t>& s, size_t pos) {}
+
   /**
    * Update candidate list when a new element is added to the solution.
    */
   virtual void UpdateStep(std::vector<node_t>& s, node_t v, int32_t level,
-                          std::set<std::pair<int32_t, node_t>>& candidates,
+                          CandSet& candidates,
                           std::unordered_map<node_t, int32_t>& cand_level,
-                          const std::vector<node_t>* ground_set) {
+                          const std::vector<node_t>* ground_set, Aux& aux) {
     CompleteCands(ground_set, v, [&](node_t cnd) {
       for (node_t n : s) {
         if (cnd == n) return true;
       }
-      // TODO: remove this CanAdd (?)
-      if (!CanAdd(s, cnd)) return true;
-      if (cand_level.count(cnd)) return true;
+      if (!CanAdd(s, aux, cnd)) return true;
       cand_level[cnd] = level + 1;
       candidates.emplace(level + 1, cnd);
       return true;
@@ -148,13 +165,20 @@ class CommutableSystem
   /**
    * Extracts the next valid cand from candidates
    */
-  virtual std::pair<node_t, int32_t> NextCand(
-      const std::vector<node_t>& s,
-      std::set<std::pair<int32_t, node_t>>& candidates) {
+  virtual std::pair<node_t, int32_t> NextCand(const std::vector<node_t>& s,
+                                              CandSet& candidates, Aux& aux) {
     while (!candidates.empty()) {
-      auto p = *candidates.begin();
-      candidates.erase(candidates.begin());
-      if (!CanAdd(s, p.second)) continue;
+      auto p = candidates.top();
+      candidates.pop();
+      bool present = false;
+      for (node_t n : s) {
+        if (p.second == n) {
+          present = true;
+          break;
+        }
+      }
+      if (present) continue;
+      if (!CanAdd(s, aux, p.second)) continue;
       return {p.second, p.first};
     }
     return {graph_size_, -1};
@@ -178,16 +202,18 @@ class CommutableSystem
   virtual bool Complete(std::vector<node_t>& s, std::vector<int32_t>& level,
                         bool stop_on_seed_change = false) {
     if (s.empty()) throw std::runtime_error("??");
-    std::set<std::pair<int32_t, node_t>> candidates;
+    CandSet candidates;
+    // Only needed for CanAdd
+    Aux aux = InitAux(s);
     std::unordered_map<node_t, int32_t> cand_level;
     for (uint32_t i = 0; i < s.size(); i++) {
-      UpdateStep(s, s[i], level[i], candidates, cand_level, nullptr);
+      UpdateStep(s, s[i], level[i], candidates, cand_level, nullptr, aux);
     }
     bool seed_change = false;
     while (true) {
       node_t n;
       int32_t l;
-      std::tie(n, l) = NextCand(s, candidates);
+      std::tie(n, l) = NextCand(s, candidates, aux);
       if (n == graph_size_) break;
       unsigned pos = s.size();
       while (pos > 0 &&
@@ -202,12 +228,14 @@ class CommutableSystem
         seed_change = true;
         Resort(s, level, n);
         cand_level.clear();
-        candidates.clear();
+        clearpq(candidates);
+        aux = InitAux(s);
         for (uint32_t i = 0; i < s.size(); i++) {
-          UpdateStep(s, s[i], level[i], candidates, cand_level, nullptr);
+          UpdateStep(s, s[i], level[i], candidates, cand_level, nullptr, aux);
         }
       } else {
-        UpdateStep(s, n, l, candidates, cand_level, nullptr);
+        UpdateAux(aux, s, pos);
+        UpdateStep(s, n, l, candidates, cand_level, nullptr, aux);
       }
     }
     return seed_change;
@@ -220,17 +248,17 @@ class CommutableSystem
                               std::vector<int32_t>& level,
                               const std::vector<node_t>& inside,
                               bool change_seed = true) {
-    ;
     if (s.empty()) throw std::runtime_error("??");
-    std::set<std::pair<int32_t, node_t>> candidates;
+    CandSet candidates;
+    Aux aux = InitAux(s);
     std::unordered_map<node_t, int32_t> cand_level;
     for (uint32_t i = 0; i < s.size(); i++) {
-      UpdateStep(s, s[i], level[i], candidates, cand_level, &inside);
+      UpdateStep(s, s[i], level[i], candidates, cand_level, &inside, aux);
     }
     while (true) {
       node_t n;
       int32_t l;
-      std::tie(n, l) = NextCand(s, candidates);
+      std::tie(n, l) = NextCand(s, candidates, aux);
       if (n == graph_size_) break;
       unsigned pos = s.size();
       while (pos > 0 &&
@@ -241,12 +269,14 @@ class CommutableSystem
       if (n < s[0] && change_seed) {  // Seed change
         Resort(s, level, n);
         cand_level.clear();
-        candidates.clear();
+        clearpq(candidates);
+        aux = InitAux(s);
         for (uint32_t i = 0; i < s.size(); i++) {
-          UpdateStep(s, s[i], level[i], candidates, cand_level, &inside);
+          UpdateStep(s, s[i], level[i], candidates, cand_level, &inside, aux);
         }
       } else {
-        UpdateStep(s, n, l, candidates, cand_level, &inside);
+        UpdateAux(aux, s, pos);
+        UpdateStep(s, n, l, candidates, cand_level, &inside, aux);
       }
     }
   }
