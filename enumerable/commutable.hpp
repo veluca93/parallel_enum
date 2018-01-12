@@ -108,7 +108,7 @@ class CommutableSystem
    * because of a single new element in a solution.
    */
   virtual void CompleteCands(const std::vector<node_t>* ground_set,
-                             node_t new_elem,
+                             node_t new_elem, size_t sol_size,
                              const std::function<bool(node_t)>& cb) {
     if (!ground_set) {
       for (node_t i = 0; i < graph_size_; i++) {
@@ -148,10 +148,10 @@ class CommutableSystem
    * Update candidate list when a new element is added to the solution.
    */
   virtual void UpdateStep(std::vector<node_t>& s, node_t v, int32_t level,
-                          CandSet& candidates,
+                          size_t sol_size, CandSet& candidates,
                           std::unordered_map<node_t, int32_t>& cand_level,
                           const std::vector<node_t>* ground_set, Aux& aux) {
-    CompleteCands(ground_set, v, [&](node_t cnd) {
+    CompleteCands(ground_set, v, sol_size, [&](node_t cnd) {
       for (node_t n : s) {
         if (cnd == n) return true;
       }
@@ -207,7 +207,7 @@ class CommutableSystem
     Aux aux = InitAux(s);
     std::unordered_map<node_t, int32_t> cand_level;
     for (uint32_t i = 0; i < s.size(); i++) {
-      UpdateStep(s, s[i], level[i], candidates, cand_level, nullptr, aux);
+      UpdateStep(s, s[i], level[i], i, candidates, cand_level, nullptr, aux);
     }
     bool seed_change = false;
     while (true) {
@@ -231,11 +231,12 @@ class CommutableSystem
         clearpq(candidates);
         aux = InitAux(s);
         for (uint32_t i = 0; i < s.size(); i++) {
-          UpdateStep(s, s[i], level[i], candidates, cand_level, nullptr, aux);
+          UpdateStep(s, s[i], level[i], i, candidates, cand_level, nullptr,
+                     aux);
         }
       } else {
         UpdateAux(aux, s, pos);
-        UpdateStep(s, n, l, candidates, cand_level, nullptr, aux);
+        UpdateStep(s, n, l, s.size() - 1, candidates, cand_level, nullptr, aux);
       }
     }
     return seed_change;
@@ -253,7 +254,7 @@ class CommutableSystem
     Aux aux = InitAux(s);
     std::unordered_map<node_t, int32_t> cand_level;
     for (uint32_t i = 0; i < s.size(); i++) {
-      UpdateStep(s, s[i], level[i], candidates, cand_level, &inside, aux);
+      UpdateStep(s, s[i], level[i], i, candidates, cand_level, &inside, aux);
     }
     while (true) {
       node_t n;
@@ -272,11 +273,12 @@ class CommutableSystem
         clearpq(candidates);
         aux = InitAux(s);
         for (uint32_t i = 0; i < s.size(); i++) {
-          UpdateStep(s, s[i], level[i], candidates, cand_level, &inside, aux);
+          UpdateStep(s, s[i], level[i], i, candidates, cand_level, &inside,
+                     aux);
         }
       } else {
         UpdateAux(aux, s, pos);
-        UpdateStep(s, n, l, candidates, cand_level, &inside, aux);
+        UpdateStep(s, n, l, s.size() - 1, candidates, cand_level, &inside, aux);
       }
     }
   }
