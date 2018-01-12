@@ -297,27 +297,6 @@ class CommutableSystem
   }
 
   /**
-   * Parent function, returns the parent index.
-   */
-  virtual node_t Parent(const std::vector<node_t>& s,
-                        const std::vector<int32_t>& level,
-                        std::vector<node_t>& parent,
-                        std::vector<int32_t>& parent_level) {
-    for (unsigned parind_pos = s.size() - 1; parind_pos > 0; parind_pos--) {
-      parent = s;
-      parent_level = level;
-      parent.resize(parind_pos);
-      parent_level.resize(parind_pos);
-      Complete(parent, parent_level);
-      if (parent != s) {
-        return s[parind_pos];
-      }
-    }
-    parent.clear();
-    return graph_size_;
-  }
-
-  /**
    * Computes the children of a given solution. Returns true if we stopped
    * generating them because the callback returned false.
    */
@@ -337,15 +316,6 @@ class CommutableSystem
           GetPrefix(core, clvl, seed, cand);
           std::vector<node_t> child = core;
           std::vector<int32_t> lvl = clvl;
-          // There was a seed change
-          if (Complete(child, lvl, true)) continue;
-          std::vector<node_t> p;
-          std::vector<int32_t> plvl;
-          node_t parind = Parent(child, lvl, p, plvl);
-          // Not the parent of this child
-          if (p != s) continue;
-          // Wrong parent index
-          if (parind != cand) continue;
           // Finding the solution from a wrong seed.
           node_t correct_seed = child[0];
           for (node_t n : child) {
@@ -354,8 +324,27 @@ class CommutableSystem
             }
           }
           if (seed != correct_seed) continue;
+          // There was a seed change
+          if (Complete(child, lvl, true)) continue;
+          // Parent check. NOTE: assumes things to be
+          // in the correct order.
+          bool starts_with_core = true;
+          for (size_t i = 0; i < core.size(); i++) {
+            if (core[i] != child[i]) {
+              starts_with_core = false;
+              break;
+            }
+          }
+          if (!starts_with_core) continue;
+          std::vector<node_t> p(core.begin(), core.end());
+          std::vector<int32_t> plvl = clvl;
+          p.pop_back();
+          plvl.pop_back();
+          Complete(p, plvl);
+          // Not the parent of this child
+          if (p != s) continue;
           if (RestrMultiple()) {
-            p.push_back(parind);
+            p.push_back(cand);
             CompleteInside(core, clvl, p);
             // TODO: improve this ?
             std::vector<node_t> sol_copy(sol.begin(), sol.end());
