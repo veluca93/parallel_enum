@@ -26,11 +26,19 @@ cc_library(
 )
 
 cc_library(
+    name = "connected_hereditary",
+    hdrs = ["connected_hereditary.hpp"],
+    deps = [
+        ":commutable",
+    ],
+)
+
+cc_library(
     name = "ckplex",
     srcs = ["ckplex.cpp"],
     hdrs = ["ckplex.hpp"],
     deps = [
-        ":commutable",
+        ":connected_hereditary",
         ":enumerable",
         "//permute",
         "//util:graph",

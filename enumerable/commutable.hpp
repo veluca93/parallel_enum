@@ -99,7 +99,7 @@ class CommutableSystem
    * Checks if the given element can be a valid seed of a solution,
    * or a root if NULL is specified.
    */
-  virtual bool IsSeed(node_t v, const std::unordered_set<node_t>* s) {
+  virtual bool IsSeed(node_t v, const std::vector<node_t>* s) {
     return IsGood({v});
   }
 
@@ -189,6 +189,7 @@ class CommutableSystem
    */
   virtual void Resort(std::vector<node_t>& s, std::vector<int32_t>& level,
                       node_t seed) {
+    // TODO: implement this to be faster.
     std::vector<node_t> sn{seed};
     std::vector<int32_t> ln{0};
     CompleteInside(sn, ln, s, false);
@@ -296,6 +297,15 @@ class CommutableSystem
     level.resize(i + 1);
   }
 
+  virtual void ValidSeeds(const std::vector<node_t>& sol, node_t cand,
+                          const std::function<bool(node_t)>& cb) {
+    for (auto seed : sol) {
+      if (!IsSeed(seed, &sol)) continue;
+      if (cand <= seed) continue;
+      if (!cb(seed)) break;
+    }
+  }
+
   /**
    * Computes the children of a given solution. Returns true if we stopped
    * generating them because the callback returned false.
@@ -307,10 +317,7 @@ class CommutableSystem
     bool not_done = true;
     RestrictedCands(s, level, [&](node_t cand) {
       RestrictedProblem(s, cand, [&](const std::vector<node_t>& sol) {
-        std::unordered_set<node_t> sol_set(sol.begin(), sol.end());
-        for (auto seed : sol) {
-          if (!IsSeed(seed, &sol_set)) continue;
-          if (cand <= seed) continue;
+        ValidSeeds(sol, cand, [&](node_t seed) {
           std::vector<node_t> core = sol;
           std::vector<int32_t> clvl = level;
           GetPrefix(core, clvl, seed, cand);
@@ -323,9 +330,9 @@ class CommutableSystem
               correct_seed = n;
             }
           }
-          if (seed != correct_seed) continue;
+          if (seed != correct_seed) return true;
           // There was a seed change
-          if (Complete(child, lvl, true)) continue;
+          if (Complete(child, lvl, true)) return true;
           // Parent check. NOTE: assumes things to be
           // in the correct order.
           bool starts_with_core = true;
@@ -335,14 +342,14 @@ class CommutableSystem
               break;
             }
           }
-          if (!starts_with_core) continue;
+          if (!starts_with_core) return true;
           std::vector<node_t> p(core.begin(), core.end());
           std::vector<int32_t> plvl = clvl;
           p.pop_back();
           plvl.pop_back();
           Complete(p, plvl);
           // Not the parent of this child
-          if (p != s) continue;
+          if (p != s) return true;
           if (RestrMultiple()) {
             p.push_back(cand);
             CompleteInside(core, clvl, p);
@@ -351,13 +358,13 @@ class CommutableSystem
             std::sort(core.begin(), core.end());
             std::sort(sol_copy.begin(), sol_copy.end());
             // Wrong restricted problem solution
-            if (core != sol_copy) continue;
+            if (core != sol_copy) return true;
           }
           if (!cb(child, lvl)) {
             not_done = false;
-            break;
           }
-        }
+          return not_done;
+        });
         return not_done;
       });
       return not_done;
