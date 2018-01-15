@@ -33,6 +33,8 @@ class binary_search_t {
 
   T get_at(size_t idx) const { return support[idx]; }
 
+  T operator[](size_t idx) const { return get_at(idx); }
+
   bool count(T v) const {
     size_t n = support.size();
     size_t cur = 0;

@@ -48,7 +48,7 @@ class CommutableSystem
     CommutableNode<node_t> root;
     root.first.push_back(i);
     root.second.push_back(0);
-    if (!Complete(root.first, root.second, true)) {
+    if (!Complete(root.first, root.second, nullptr, nullptr, true)) {
       cb(root);
     }
   }
@@ -118,6 +118,24 @@ class CommutableSystem
       for (auto i : *ground_set) {
         if (!cb(i)) break;
       }
+    }
+  }
+  // New version
+  virtual bool CompleteCandNum(const std::vector<node_t>* ground_set,
+                               node_t new_elem, size_t iterator_num, size_t idx,
+                               node_t* out) {
+    if (!ground_set) {
+      if (idx < graph_size_) {
+        *out = idx;
+        return true;
+      }
+      return false;
+    } else {
+      if (idx < ground_set->size()) {
+        *out = (*ground_set)[idx];
+        return true;
+      }
+      return false;
     }
   }
 
@@ -190,18 +208,14 @@ class CommutableSystem
   virtual void Resort(std::vector<node_t>& s, std::vector<int32_t>& level,
                       node_t seed) {
     // TODO: implement this to be faster.
-    std::vector<node_t> sn{seed};
-    std::vector<int32_t> ln{0};
-    CompleteInside(sn, ln, s, false);
-    s = sn;
-    level = ln;
+    throw std::runtime_error("Never call this for now");
   }
 
   /**
    * Complete function. Returns true if there was a seed change, false otherwise
    */
-  virtual bool Complete(std::vector<node_t>& s, std::vector<int32_t>& level,
-                        bool stop_on_seed_change = false) {
+  virtual bool OldComplete(std::vector<node_t>& s, std::vector<int32_t>& level,
+                           bool stop_on_seed_change = false) {
     if (s.empty()) throw std::runtime_error("??");
     CandSet candidates;
     // Only needed for CanAdd
@@ -284,6 +298,125 @@ class CommutableSystem
     }
   }
 
+  class Candidates {
+   public:
+    Candidates(CommutableSystem* commutable_system, std::vector<node_t>& s,
+               Aux& aux, const std::vector<node_t>* ground_set)
+        : commutable_system_(commutable_system),
+          s_(s),
+          aux_(aux),
+          ground_set_(ground_set) {}
+    bool Next(node_t* n, int32_t* lv) {
+      while (!pq_.empty()) {
+        auto p = pq_.top();
+        pq_.pop();
+        *n = std::get<1>(p);
+        *lv = std::get<0>(p);
+        InsertInPQ(std::get<2>(p));
+        if (CanReallyAdd(*n)) return true;
+      }
+      return false;
+    }
+    void Add(node_t v, int32_t lv) {
+      info_.emplace_back(0, v, lv);
+      InsertInPQ(info_.size() - 1);
+    }
+
+   private:
+    bool CanReallyAdd(node_t v) {
+      bool present = false;
+      for (node_t n : s_) {
+        if (v == n) {
+          present = true;
+          break;
+        }
+      }
+      if (present) return false;
+      return commutable_system_->CanAdd(s_, aux_, v);
+    }
+    void InsertInPQ(size_t iterator_num) {
+      node_t cand;
+      auto& inf = info_[iterator_num];
+      if (commutable_system_->CompleteCandNum(ground_set_, std::get<1>(inf),
+                                              iterator_num, std::get<0>(inf)++,
+                                              &cand)) {
+        pq_.emplace(std::get<2>(inf) + 1, cand, iterator_num);
+      }
+    }
+    CommutableSystem* commutable_system_;
+    std::vector<node_t>& s_;
+    Aux& aux_;
+    const std::vector<node_t>* ground_set_;
+    // level, node, iterator number
+    using CandIter = std::tuple<int32_t, node_t, size_t>;
+    std::priority_queue<CandIter, std::vector<CandIter>, std::greater<CandIter>>
+        pq_;
+    // iteration idx, owner node, owner lvl
+    std::vector<std::tuple<size_t, node_t, int32_t>> info_;
+  };
+
+  /**
+   * Returns false if it failed for some reason.
+   * We must have s \subseteq target \subseteq ground_set.
+   */
+  virtual bool Complete(std::vector<node_t>& s, std::vector<int32_t>& level,
+                        const std::vector<node_t>* ground_set = nullptr,
+                        const std::vector<node_t>* target = nullptr,
+                        bool fail_on_seed_change = false,
+                        std::pair<int32_t, node_t> fail_if_smaller_than = {-1,
+                                                                           0}) {
+    std::function<bool(node_t)> is_in_target;
+    if (target) {
+      cuckoo_hash_set<node_t> target_set;
+      for (node_t v : *target) {
+        target_set.insert(v);
+      }
+      is_in_target = [target_set](node_t v) { return target_set.count(v); };
+    } else {
+      is_in_target = [](node_t) { return true; };
+    }
+    while (true) {
+      Aux aux = InitAux(s);
+      Candidates candidates(this, s, aux, ground_set);
+      bool finished = false;
+      candidates.Add(s[0], 0);
+      size_t next_in_s = 1;
+      while (true) {
+        // Add cands_to_add
+        node_t next = 0;
+        int32_t next_lvl = 0;
+        if (!candidates.Next(&next, &next_lvl)) {
+          finished = true;
+          break;
+        }
+        if (next_in_s >= s.size() || next != s[next_in_s]) {
+          if (!is_in_target(next)) {
+            return false;
+          }
+          if (std::pair<int32_t, node_t>{next_lvl, next} <
+              fail_if_smaller_than) {
+            return false;
+          }
+          s.push_back(next);
+          level.push_back(next_lvl);
+          UpdateAux(aux, s, s.size() - 1);
+          // seed change
+          if (next < s[0]) {
+            std::swap(s.front(), s.back());
+            if (fail_on_seed_change || fail_if_smaller_than.first != -1)
+              return false;
+            break;
+          }
+        } else {
+          next_in_s++;
+        }
+        candidates.Add(next, next_lvl);
+      }
+      Resort(s, level, s.front());
+      if (finished) return true;
+    }
+  }
+
   /**
    * Computes the prefix of the solution with a given seed and ending with v
    */
@@ -332,7 +465,9 @@ class CommutableSystem
           }
           if (seed != correct_seed) return true;
           // There was a seed change
-          if (Complete(child, lvl, true)) return true;
+          if (!Complete(child, lvl, nullptr, nullptr, true,
+                        {lvl.back(), child.back()}))
+            return true;
           // Parent check. NOTE: assumes things to be
           // in the correct order.
           bool starts_with_core = true;
@@ -347,18 +482,10 @@ class CommutableSystem
           std::vector<int32_t> plvl = clvl;
           p.pop_back();
           plvl.pop_back();
-          Complete(p, plvl);
-          // Not the parent of this child
-          if (p != s) return true;
+          if (!Complete(p, plvl, nullptr, &s)) return true;
           if (RestrMultiple()) {
             p.push_back(cand);
-            CompleteInside(core, clvl, p);
-            // TODO: improve this ?
-            std::vector<node_t> sol_copy(sol.begin(), sol.end());
-            std::sort(core.begin(), core.end());
-            std::sort(sol_copy.begin(), sol_copy.end());
-            // Wrong restricted problem solution
-            if (core != sol_copy) return true;
+            if (!Complete(core, clvl, &p, &sol)) return true;
           }
           if (!cb(child, lvl)) {
             not_done = false;
