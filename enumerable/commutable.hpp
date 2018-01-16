@@ -15,6 +15,10 @@
 #include "enumerable/enumerable.hpp"
 #include "util/graph.hpp"
 
+//#define DEBUG_CANDIDATES
+//#define DEBUG_COMPLETE
+//#define DEBUG_CHILDREN
+
 template <class T, class S, class C>
 void clearpq(std::priority_queue<T, S, C>& q) {
   struct HackedQueue : private std::priority_queue<T, S, C> {
@@ -23,6 +27,16 @@ void clearpq(std::priority_queue<T, S, C>& q) {
     }
   };
   HackedQueue::Container(q).clear();
+}
+
+template <class T, class S, class C>
+S& pqc(std::priority_queue<T, S, C>& q) {
+  struct HackedQueue : private std::priority_queue<T, S, C> {
+    static S& Container(std::priority_queue<T, S, C>& q) {
+      return q.*&HackedQueue::c;
+    }
+  };
+  return HackedQueue::Container(q);
 }
 
 template <typename node_t>
@@ -48,7 +62,7 @@ class CommutableSystem
     CommutableNode<node_t> root;
     root.first.push_back(i);
     root.second.push_back(0);
-    if (!Complete(root.first, root.second, nullptr, nullptr, true)) {
+    if (Complete(root.first, root.second, nullptr, nullptr, true)) {
       cb(root);
     }
   }
@@ -307,17 +321,29 @@ class CommutableSystem
           aux_(aux),
           ground_set_(ground_set) {}
     bool Next(node_t* n, int32_t* lv) {
+#ifdef DEBUG_CANDIDATES
+      std::cout << "PQ: ";
+      for (auto t : pqc(pq_)) {
+        std::cout << "(" << std::get<0>(t) << ", " << std::get<1>(t) << ", "
+                  << std::get<2>(t) << ")  ";
+      }
+      std::cout << std::endl;
+#endif
       while (!pq_.empty()) {
         auto p = pq_.top();
         pq_.pop();
         *n = std::get<1>(p);
         *lv = std::get<0>(p);
+#ifdef DEBUG_CANDIDATES
+        std::cout << "POP: " << *n << "@" << *lv << std::endl;
+#endif
         InsertInPQ(std::get<2>(p));
         if (CanReallyAdd(*n)) return true;
       }
       return false;
     }
     void Add(node_t v, int32_t lv) {
+      added_so_far_.push_back(v);
       info_.emplace_back(0, v, lv);
       InsertInPQ(info_.size() - 1);
     }
@@ -325,13 +351,20 @@ class CommutableSystem
    private:
     bool CanReallyAdd(node_t v) {
       bool present = false;
-      for (node_t n : s_) {
+      for (node_t n : added_so_far_) {
         if (v == n) {
           present = true;
           break;
         }
       }
       if (present) return false;
+      for (node_t n : s_) {
+        if (v == n) {
+          present = true;
+          break;
+        }
+      }
+      if (present) return true;
       return commutable_system_->CanAdd(s_, aux_, v);
     }
     void InsertInPQ(size_t iterator_num) {
@@ -345,6 +378,7 @@ class CommutableSystem
     }
     CommutableSystem* commutable_system_;
     std::vector<node_t>& s_;
+    std::vector<node_t> added_so_far_;
     Aux& aux_;
     const std::vector<node_t>* ground_set_;
     // level, node, iterator number
@@ -365,6 +399,25 @@ class CommutableSystem
                         bool fail_on_seed_change = false,
                         std::pair<int32_t, node_t> fail_if_smaller_than = {-1,
                                                                            0}) {
+#ifdef DEBUG_COMPLETE
+    std::cout << "COMPLETE: " << absl::StrJoin(s, ", ") << std::endl;
+    std::cout << "  LEVELS: " << absl::StrJoin(level, ", ") << std::endl;
+    if (ground_set) {
+      std::cout << "          IN: " << absl::StrJoin(*ground_set, ", ")
+                << std::endl;
+    }
+    if (target) {
+      std::cout << "         TGT: " << absl::StrJoin(*target, ", ")
+                << std::endl;
+    }
+    if (fail_on_seed_change) {
+      std::cout << "         FAIL_SEED" << std::endl;
+    }
+    if (fail_if_smaller_than.first != -1) {
+      std::cout << "         FAIL_SMALLER " << fail_if_smaller_than.first
+                << ", " << fail_if_smaller_than.second << std::endl;
+    }
+#endif
     std::function<bool(node_t)> is_in_target;
     if (target) {
       cuckoo_hash_set<node_t> target_set;
@@ -389,12 +442,21 @@ class CommutableSystem
           finished = true;
           break;
         }
+#ifdef DEBUG_COMPLETE
+        std::cout << "CAND: " << next << "@" << next_lvl << std::endl;
+#endif
         if (next_in_s >= s.size() || next != s[next_in_s]) {
           if (!is_in_target(next)) {
+#ifdef DEBUG_COMPLETE
+            std::cout << "NOT IN TARGET" << std::endl << std::endl;
+#endif
             return false;
           }
           if (std::pair<int32_t, node_t>{next_lvl, next} <
               fail_if_smaller_than) {
+#ifdef DEBUG_COMPLETE
+            std::cout << "FAILED_SMALL" << std::endl << std::endl;
+#endif
             return false;
           }
           s.push_back(next);
@@ -403,8 +465,12 @@ class CommutableSystem
           // seed change
           if (next < s[0]) {
             std::swap(s.front(), s.back());
-            if (fail_on_seed_change || fail_if_smaller_than.first != -1)
+            if (fail_on_seed_change || fail_if_smaller_than.first != -1) {
+#ifdef DEBUG_COMPLETE
+              std::cout << "FAILED_SEED" << std::endl << std::endl;
+#endif
               return false;
+            }
             break;
           }
         } else {
@@ -413,7 +479,18 @@ class CommutableSystem
         candidates.Add(next, next_lvl);
       }
       Resort(s, level, s.front());
-      if (finished) return true;
+      if (finished) {
+#ifdef DEBUG_COMPLETE
+        std::cout << "  DONE: " << absl::StrJoin(s, ", ") << std::endl;
+        std::cout << "LEVELS: " << absl::StrJoin(level, ", ") << std::endl
+                  << std::endl;
+#endif
+        return true;
+      }
+#ifdef DEBUG_COMPLETE
+      std::cout << "SEED_CHANGE: " << absl::StrJoin(s, ", ") << std::endl;
+      std::cout << "     LEVELS: " << absl::StrJoin(level, ", ") << std::endl;
+#endif
     }
   }
 
@@ -448,9 +525,22 @@ class CommutableSystem
       const std::function<bool(const std::vector<node_t>&,
                                const std::vector<int32_t>&)>& cb) {
     bool not_done = true;
+#ifdef DEBUG_CHILDREN
+    std::cout << "CHILDREN: " << absl::StrJoin(s, ", ") << std::endl;
+    std::cout << "  LEVELS: " << absl::StrJoin(level, ", ") << std::endl;
+#endif
     RestrictedCands(s, level, [&](node_t cand) {
+#ifdef DEBUG_CHILDREN
+      std::cout << "RCAND: " << cand << std::endl;
+#endif
       RestrictedProblem(s, cand, [&](const std::vector<node_t>& sol) {
+#ifdef DEBUG_CHILDREN
+        std::cout << "SOL: " << absl::StrJoin(sol, ", ") << std::endl;
+#endif
         ValidSeeds(sol, cand, [&](node_t seed) {
+#ifdef DEBUG_CHILDREN
+          std::cout << "SEED: " << seed << std::endl;
+#endif
           std::vector<node_t> core = sol;
           std::vector<int32_t> clvl = level;
           GetPrefix(core, clvl, seed, cand);
@@ -464,10 +554,16 @@ class CommutableSystem
             }
           }
           if (seed != correct_seed) return true;
-          // There was a seed change
+            // There was a seed change
+#ifdef DEBUG_CHILDREN
+          std::cout << "CORE+RCAND: " << absl::StrJoin(core, ", ") << std::endl;
+#endif
           if (!Complete(child, lvl, nullptr, nullptr, true,
                         {lvl.back(), child.back()}))
             return true;
+#ifdef DEBUG_CHILDREN
+          std::cout << "CHILD: " << absl::StrJoin(child, ", ") << std::endl;
+#endif
           // Parent check. NOTE: assumes things to be
           // in the correct order.
           bool starts_with_core = true;
@@ -482,11 +578,20 @@ class CommutableSystem
           std::vector<int32_t> plvl = clvl;
           p.pop_back();
           plvl.pop_back();
+#ifdef DEBUG_CHILDREN
+          std::cout << "CORE: " << absl::StrJoin(child, ", ") << std::endl;
+#endif
           if (!Complete(p, plvl, nullptr, &s)) return true;
+#ifdef DEBUG_CHILDREN
+          std::cout << "PARENT: " << absl::StrJoin(p, ", ") << std::endl;
+#endif
           if (RestrMultiple()) {
             p.push_back(cand);
             if (!Complete(core, clvl, &p, &sol)) return true;
           }
+#ifdef DEBUG_CHILDREN
+          std::cout << "OK" << std::endl;
+#endif
           if (!cb(child, lvl)) {
             not_done = false;
           }
@@ -496,6 +601,9 @@ class CommutableSystem
       });
       return not_done;
     });
+#ifdef DEBUG_CHILDREN
+    std::cout << std::endl;
+#endif
     return not_done;
   }
   size_t graph_size_;
