@@ -121,20 +121,6 @@ class CommutableSystem
    * Iterates over all the possible new elements that could be added
    * because of a single new element in a solution.
    */
-  virtual void CompleteCands(const std::vector<node_t>* ground_set,
-                             node_t new_elem, size_t sol_size,
-                             const std::function<bool(node_t)>& cb) {
-    if (!ground_set) {
-      for (node_t i = 0; i < graph_size_; i++) {
-        if (!cb(i)) break;
-      }
-    } else {
-      for (auto i : *ground_set) {
-        if (!cb(i)) break;
-      }
-    }
-  }
-  // New version
   virtual bool CompleteCandNum(const std::vector<node_t>* ground_set,
                                node_t new_elem, size_t iterator_num, size_t idx,
                                node_t* out) {
@@ -168,53 +154,9 @@ class CommutableSystem
     }
   }
 
-  using CandEl = std::pair<int32_t, node_t>;
-  using CandSet =
-      std::priority_queue<CandEl, std::vector<CandEl>, std::greater<CandEl>>;
-
   virtual Aux InitAux(const std::vector<node_t>& s) { return {}; }
 
   virtual void UpdateAux(Aux& aux, const std::vector<node_t>& s, size_t pos) {}
-
-  /**
-   * Update candidate list when a new element is added to the solution.
-   */
-  virtual void UpdateStep(std::vector<node_t>& s, node_t v, int32_t level,
-                          size_t sol_size, CandSet& candidates,
-                          std::unordered_map<node_t, int32_t>& cand_level,
-                          const std::vector<node_t>* ground_set, Aux& aux) {
-    CompleteCands(ground_set, v, sol_size, [&](node_t cnd) {
-      for (node_t n : s) {
-        if (cnd == n) return true;
-      }
-      if (!CanAdd(s, aux, cnd)) return true;
-      cand_level[cnd] = level + 1;
-      candidates.emplace(level + 1, cnd);
-      return true;
-    });
-  }
-
-  /**
-   * Extracts the next valid cand from candidates
-   */
-  virtual std::pair<node_t, int32_t> NextCand(const std::vector<node_t>& s,
-                                              CandSet& candidates, Aux& aux) {
-    while (!candidates.empty()) {
-      auto p = candidates.top();
-      candidates.pop();
-      bool present = false;
-      for (node_t n : s) {
-        if (p.second == n) {
-          present = true;
-          break;
-        }
-      }
-      if (present) continue;
-      if (!CanAdd(s, aux, p.second)) continue;
-      return {p.second, p.first};
-    }
-    return {graph_size_, -1};
-  }
 
   /**
    * Recomputes the order and the level of the elements in s with another seed.
@@ -225,93 +167,6 @@ class CommutableSystem
     throw std::runtime_error("Never call this for now");
   }
 
-  /**
-   * Complete function. Returns true if there was a seed change, false otherwise
-   */
-  virtual bool OldComplete(std::vector<node_t>& s, std::vector<int32_t>& level,
-                           bool stop_on_seed_change = false) {
-    if (s.empty()) throw std::runtime_error("??");
-    CandSet candidates;
-    // Only needed for CanAdd
-    Aux aux = InitAux(s);
-    std::unordered_map<node_t, int32_t> cand_level;
-    for (uint32_t i = 0; i < s.size(); i++) {
-      UpdateStep(s, s[i], level[i], i, candidates, cand_level, nullptr, aux);
-    }
-    bool seed_change = false;
-    while (true) {
-      node_t n;
-      int32_t l;
-      std::tie(n, l) = NextCand(s, candidates, aux);
-      if (n == graph_size_) break;
-      unsigned pos = s.size();
-      while (pos > 0 &&
-             (l < level[pos - 1] || (l == level[pos - 1] && n < s[pos - 1])))
-        pos--;
-      s.insert(s.begin() + pos, n);
-      level.insert(level.begin() + pos, l);
-      if (n < s[0]) {  // Seed change
-        if (stop_on_seed_change) {
-          return true;
-        }
-        seed_change = true;
-        Resort(s, level, n);
-        cand_level.clear();
-        clearpq(candidates);
-        aux = InitAux(s);
-        for (uint32_t i = 0; i < s.size(); i++) {
-          UpdateStep(s, s[i], level[i], i, candidates, cand_level, nullptr,
-                     aux);
-        }
-      } else {
-        UpdateAux(aux, s, pos);
-        UpdateStep(s, n, l, s.size() - 1, candidates, cand_level, nullptr, aux);
-      }
-    }
-    return seed_change;
-  }
-
-  /**
-   * Runs complete inside a given set.
-   */
-  virtual void CompleteInside(std::vector<node_t>& s,
-                              std::vector<int32_t>& level,
-                              const std::vector<node_t>& inside,
-                              bool change_seed = true) {
-    if (s.empty()) throw std::runtime_error("??");
-    CandSet candidates;
-    Aux aux = InitAux(s);
-    std::unordered_map<node_t, int32_t> cand_level;
-    for (uint32_t i = 0; i < s.size(); i++) {
-      UpdateStep(s, s[i], level[i], i, candidates, cand_level, &inside, aux);
-    }
-    while (true) {
-      node_t n;
-      int32_t l;
-      std::tie(n, l) = NextCand(s, candidates, aux);
-      if (n == graph_size_) break;
-      unsigned pos = s.size();
-      while (pos > 0 &&
-             (l < level[pos - 1] || (l == level[pos - 1] && n < s[pos - 1])))
-        pos--;
-      s.insert(s.begin() + pos, n);
-      level.insert(level.begin() + pos, l);
-      if (n < s[0] && change_seed) {  // Seed change
-        Resort(s, level, n);
-        cand_level.clear();
-        clearpq(candidates);
-        aux = InitAux(s);
-        for (uint32_t i = 0; i < s.size(); i++) {
-          UpdateStep(s, s[i], level[i], i, candidates, cand_level, &inside,
-                     aux);
-        }
-      } else {
-        UpdateAux(aux, s, pos);
-        UpdateStep(s, n, l, s.size() - 1, candidates, cand_level, &inside, aux);
-      }
-    }
-  }
-
   class Candidates {
    public:
     Candidates(CommutableSystem* commutable_system, std::vector<node_t>& s,
@@ -319,7 +174,11 @@ class CommutableSystem
         : commutable_system_(commutable_system),
           s_(s),
           aux_(aux),
-          ground_set_(ground_set) {}
+          ground_set_(ground_set) {
+      added_so_far_.clear();
+      clearpq(pq_);
+      info_.clear();
+    }
     bool Next(node_t* n, int32_t* lv) {
 #ifdef DEBUG_CANDIDATES
       std::cout << "PQ: ";
@@ -378,15 +237,18 @@ class CommutableSystem
     }
     CommutableSystem* commutable_system_;
     std::vector<node_t>& s_;
-    std::vector<node_t> added_so_far_;
+    static thread_local std::vector<node_t> added_so_far_;
     Aux& aux_;
     const std::vector<node_t>* ground_set_;
     // level, node, iterator number
     using CandIter = std::tuple<int32_t, node_t, size_t>;
-    std::priority_queue<CandIter, std::vector<CandIter>, std::greater<CandIter>>
-        pq_;
+    using PQT = std::priority_queue<CandIter, std::vector<CandIter>,
+                                    std::greater<CandIter>>;
+
     // iteration idx, owner node, owner lvl
-    std::vector<std::tuple<size_t, node_t, int32_t>> info_;
+    using info_t = std::tuple<size_t, node_t, int32_t>;
+    static thread_local PQT pq_;
+    static thread_local std::vector<info_t> info_;
   };
 
   /**
@@ -418,8 +280,9 @@ class CommutableSystem
                 << ", " << fail_if_smaller_than.second << std::endl;
     }
 #endif
-    std::function<bool(node_t)> is_in_target;
+    thread_local std::function<bool(node_t)> is_in_target;
     if (target) {
+      // TODO: speedup
       cuckoo_hash_set<node_t> target_set;
       for (node_t v : *target) {
         target_set.insert(v);
@@ -541,11 +404,15 @@ class CommutableSystem
 #ifdef DEBUG_CHILDREN
           std::cout << "SEED: " << seed << std::endl;
 #endif
-          std::vector<node_t> core = sol;
-          std::vector<int32_t> clvl = level;
+          thread_local std::vector<node_t> core;
+          thread_local std::vector<int32_t> clvl;
+          core = sol;
+          clvl = level;
           GetPrefix(core, clvl, seed, cand);
-          std::vector<node_t> child = core;
-          std::vector<int32_t> lvl = clvl;
+          thread_local std::vector<node_t> child;
+          thread_local std::vector<int32_t> lvl;
+          child = core;
+          lvl = clvl;
           // Finding the solution from a wrong seed.
           node_t correct_seed = child[0];
           for (node_t n : child) {
@@ -574,8 +441,10 @@ class CommutableSystem
             }
           }
           if (!starts_with_core) return true;
-          std::vector<node_t> p(core.begin(), core.end());
-          std::vector<int32_t> plvl = clvl;
+          thread_local std::vector<node_t> p;
+          thread_local std::vector<int32_t> plvl;
+          p = core;
+          plvl = clvl;
           p.pop_back();
           plvl.pop_back();
 #ifdef DEBUG_CHILDREN
@@ -608,5 +477,18 @@ class CommutableSystem
   }
   size_t graph_size_;
 };
+
+template <typename Graph, typename Aux = int32_t>
+thread_local std::vector<typename Graph::node_t>
+    CommutableSystem<Graph, Aux>::Candidates::added_so_far_;
+
+template <typename Graph, typename Aux = int32_t>
+thread_local typename CommutableSystem<Graph, Aux>::Candidates::PQT
+    CommutableSystem<Graph, Aux>::Candidates::pq_;
+
+template <typename Graph, typename Aux = int32_t>
+thread_local std::vector<
+    typename CommutableSystem<Graph, Aux>::Candidates::info_t>
+    CommutableSystem<Graph, Aux>::Candidates::info_;
 
 #endif  // ENUMERABLE_COMMUTABLE_H

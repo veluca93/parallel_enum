@@ -45,12 +45,18 @@ class CHSystem : public CommutableSystem<Graph, Aux> {
       }
     }
     assert(seed_index != -1ULL);
-    std::vector<bool> visited(s.size());
+    thread_local std::vector<bool> visited;
+    visited.clear();
+    visited.resize(s.size());
     using PQEl = std::tuple<int32_t, node_t>;
-    std::priority_queue<PQEl, std::vector<PQEl>, std::greater<PQEl>> q;
+    thread_local std::priority_queue<PQEl, std::vector<PQEl>,
+                                     std::greater<PQEl>>
+        q;
+    clearpq(q);
     q.emplace(0, seed);
     visited[seed_index] = true;
-    std::vector<node_t> sorted;
+    thread_local std::vector<node_t> sorted;
+    sorted.clear();
     level.clear();
     while (!q.empty()) {
       auto p = q.top();

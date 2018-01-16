@@ -272,7 +272,9 @@ class cuckoo_hash_set {
         return;
       }
   }
-  void clear() { std::fill(ht, ht + bucket_size * capacity(), missing); }
+  void clear() {
+    if (ht) std::fill(ht, ht + capacity(), missing);
+  }
 
   int front() const { return *begin(); }
 };
