@@ -280,16 +280,22 @@ class CommutableSystem
                 << ", " << fail_if_smaller_than.second << std::endl;
     }
 #endif
-    thread_local std::function<bool(node_t)> is_in_target;
+    std::function<bool(node_t)> is_in_target;
+    std::function<void()> cleanup_target;
     if (target) {
-      // TODO: speedup
-      cuckoo_hash_set<node_t> target_set;
+      thread_local std::vector<bool> target_bitset(graph_size_);
       for (node_t v : *target) {
-        target_set.insert(v);
+        target_bitset[v] = true;
       }
-      is_in_target = [target_set](node_t v) { return target_set.count(v); };
+      is_in_target = [](node_t v) { return target_bitset[v]; };
+      cleanup_target = [target]() {
+        for (node_t v : *target) {
+          target_bitset[v] = false;
+        }
+      };
     } else {
       is_in_target = [](node_t) { return true; };
+      cleanup_target = []() {};
     }
     while (true) {
       Aux aux = InitAux(s);
@@ -313,6 +319,7 @@ class CommutableSystem
 #ifdef DEBUG_COMPLETE
             std::cout << "NOT IN TARGET" << std::endl << std::endl;
 #endif
+            cleanup_target();
             return false;
           }
           if (std::pair<int32_t, node_t>{next_lvl, next} <
@@ -320,6 +327,7 @@ class CommutableSystem
 #ifdef DEBUG_COMPLETE
             std::cout << "FAILED_SMALL" << std::endl << std::endl;
 #endif
+            cleanup_target();
             return false;
           }
           s.push_back(next);
@@ -332,6 +340,7 @@ class CommutableSystem
 #ifdef DEBUG_COMPLETE
               std::cout << "FAILED_SEED" << std::endl << std::endl;
 #endif
+              cleanup_target();
               return false;
             }
             break;
@@ -348,6 +357,7 @@ class CommutableSystem
         std::cout << "LEVELS: " << absl::StrJoin(level, ", ") << std::endl
                   << std::endl;
 #endif
+        cleanup_target();
         return true;
       }
 #ifdef DEBUG_COMPLETE
@@ -478,15 +488,15 @@ class CommutableSystem
   size_t graph_size_;
 };
 
-template <typename Graph, typename Aux = int32_t>
+template <typename Graph, typename Aux>
 thread_local std::vector<typename Graph::node_t>
     CommutableSystem<Graph, Aux>::Candidates::added_so_far_;
 
-template <typename Graph, typename Aux = int32_t>
+template <typename Graph, typename Aux>
 thread_local typename CommutableSystem<Graph, Aux>::Candidates::PQT
     CommutableSystem<Graph, Aux>::Candidates::pq_;
 
-template <typename Graph, typename Aux = int32_t>
+template <typename Graph, typename Aux>
 thread_local std::vector<
     typename CommutableSystem<Graph, Aux>::Candidates::info_t>
     CommutableSystem<Graph, Aux>::Candidates::info_;
