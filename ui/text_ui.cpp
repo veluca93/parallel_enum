@@ -121,7 +121,7 @@ int CKplexMain(const std::string& input_file) {
   auto graph = ReadFastGraph<node_t, void>(input_file);
   enumerator->ReadDone();
   enumerator->template MakeEnumerableSystemAndRun<
-      CKplexEnumeration<fast_graph_t<node_t, void>>>(graph.get(), FLAGS_k);
+      FastCKplexEnumeration<fast_graph_t<node_t, void>>>(graph.get(), FLAGS_k);
   if (!FLAGS_quiet) {
     enumerator->PrintStats();
   }
