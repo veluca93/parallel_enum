@@ -63,15 +63,14 @@ class Enumerator {
 
   virtual void ReportSolution(Enumerable<Node, Item>* system,
                               const Node& node) {
+    if (!system->IsSolution(node)) return;
     solutions_found_++;
     if (cb_) {
       return cb_(system->NodeToItem(node));
     }
   }
 
-  ssize_t GetSolutionsFound(){
-      return solutions_found_;
-  }
+  ssize_t GetSolutionsFound() { return solutions_found_; }
 
  protected:
   virtual void RunInternal(Enumerable<Node, Item>* system) = 0;

@@ -33,6 +33,10 @@ class Enumerable {
 
   // Converts an enumeration node into an output item.
   virtual Item NodeToItem(const Node& node) = 0;
+
+  // Returns true if the node of the computational forest represents
+  // a solution.
+  virtual bool IsSolution(const Node& node) { return true; }
 };
 
 #endif  // ENUMERABLE_ENUMERABLE_H
