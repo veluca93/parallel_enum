@@ -8,9 +8,9 @@
 #include "permute/permute.hpp"
 #include "util/graph.hpp"
 
-/*#ifdef DEGENERACY
+#ifdef DEGENERACY
 #undef DEGENERACY
-#endif*/
+#endif
 #define DEGENERACY
 
 static const constexpr bool debug_mode = false;
@@ -18,25 +18,282 @@ static const constexpr bool debug_mode = false;
 template <typename node_t>
 using Kplex = std::vector<node_t>;
 
-template <typename node_t>
-struct Diam2KplexNode {
-  node_t v;
-  std::vector<node_t> subgraph;
+template <typename Graph, size_t size>
+struct Diam2KplexNodeImpl {
+  // TODO
+};
+
+template <typename Graph>
+struct Diam2KplexNodeImpl<Graph, 0> {
+  using node_t = typename Graph::node_t;
   std::vector<size_t> kplex;
   std::vector<uint8_t> counters;
   std::vector<size_t> cands;
   std::vector<size_t> excluded;
+  void Init(const Graph* graph, const std::vector<node_t>& subgraph) {
+    kplex.clear();
+    cands.clear();
+    excluded.clear();
+    counters.clear();
+    kplex.push_back(0);
+    counters.resize(subgraph.size());
+    for (size_t i = 0; i < subgraph.size(); i++) {
+      counters[i] = !graph->are_neighs(subgraph[0], subgraph[i]);
+    }
+    if (debug_mode) {
+      std::cout << "SUBGRAPH FOR " << subgraph[0] << std::endl;
+      for (size_t i = 0; i < subgraph.size(); i++) {
+        std::cout << subgraph[i] << " HAS COUNTER " << (size_t)counters[i]
+                  << std::endl;
+      }
+    }
+    for (size_t i = 1; i < subgraph.size(); i++) {
+      cands.push_back(i);
+    }
+  }
+
   bool IsMaximal() const { return cands.empty() && excluded.empty(); }
+
+  bool CanPrune(size_t q) const { return cands.size() + kplex.size() < q; }
+
+  bool HasUniversalInExcl(const Graph* graph,
+                          const std::vector<node_t>& subgraph) const {
+    for (size_t u : excluded) {
+      if (counters[u] != 0) continue;
+      bool is_universal = true;
+      for (size_t v : cands) {
+        if (!graph->are_neighs(subgraph[u], subgraph[v])) {
+          is_universal = false;
+          break;
+        }
+      }
+      if (is_universal) return true;
+    }
+    return false;
+  }
+
+  void GetUniversalsAndSortedCands(const Graph* graph,
+                                   const std::vector<node_t>& subgraph,
+                                   std::vector<size_t>* universals,
+                                   std::vector<size_t>* sorted_cands) const {
+    thread_local std::vector<uint32_t> cand_counters;
+    cand_counters.clear();
+    cand_counters.resize(subgraph.size());
+    for (size_t u : cands) {
+      for (size_t v : cands) {
+        if (u != v && !graph->are_neighs(subgraph[u], subgraph[v])) {
+          cand_counters[u]++;
+        }
+      }
+      if (counters[u] == 0 && cand_counters[u] == 0) {
+        universals->push_back(u);
+      }
+    }
+    *sorted_cands = cands;
+    std::sort(sorted_cands->begin(), sorted_cands->end(),
+              [&](size_t a, size_t b) {
+                return counters[a] + cand_counters[a] >
+                       counters[b] + cand_counters[b];
+              });
+  }
+
+  void AddToKplex(const Graph* graph, const std::vector<node_t>& subgraph,
+                  size_t c) {
+    kplex.push_back(c);
+    if (debug_mode) {
+      std::cout << "NEW KPLEX: " << absl::StrJoin(ToItem(subgraph), ", ")
+                << std::endl;
+      for (size_t i = 0; i < subgraph.size(); i++) {
+        std::cout << subgraph[i] << " OLD COUNTER " << (size_t)counters[i]
+                  << std::endl;
+      }
+    }
+    for (size_t e = 0; e < subgraph.size(); e++) {
+      if (!graph->are_neighs(subgraph[c], subgraph[e])) {
+        counters[e]++;
+      }
+    }
+    if (debug_mode) {
+      for (size_t i = 0; i < subgraph.size(); i++) {
+        std::cout << subgraph[i] << " NEW COUNTER " << (size_t)counters[i]
+                  << std::endl;
+      }
+    }
+  }
+
+  void UpdateCandAndExcl(const Graph* graph,
+                         const std::vector<node_t>& subgraph,
+                         const std::vector<size_t>& add_to_excl,
+                         const std::vector<bool>& add_to_excl_bitset,
+                         size_t k) {
+    thread_local std::vector<size_t> excluded_cache;
+    excluded_cache = excluded;
+    excluded.clear();
+    for (size_t e : excluded_cache) {
+      if (CanAdd(graph, subgraph, k, e)) {
+        excluded.push_back(e);
+      }
+    }
+    for (size_t e : add_to_excl) {
+      if (CanAdd(graph, subgraph, k, e)) {
+        excluded.push_back(e);
+      }
+    }
+
+    thread_local std::vector<size_t> cands_cache;
+    cands_cache = cands;
+    cands.clear();
+    for (size_t e : cands_cache) {
+      if (!add_to_excl_bitset[e] && CanAdd(graph, subgraph, k, e)) {
+        cands.push_back(e);
+      }
+    }
+  }
+
+  bool IsReallyMaximal(const Graph* graph, const std::vector<node_t>& subgraph,
+                       size_t k, size_t q) const {
+    if (kplex.size() < q) return false;
+    // TODO: diameter
+    if (k > 2) throw std::runtime_error("ciao ciao");
+    if (k == 2 && kplex.size() == 2) {
+      if (!graph->are_neighs(subgraph[kplex[0]], subgraph[kplex[1]])) {
+        return false;
+      }
+    }
+    // Check neighs of the first k nodes that are smaller than v.
+    for (size_t i = 0; i < k && i < kplex.size(); i++) {
+      for (node_t n : graph->neighs(subgraph[kplex[i]])) {
+        if (n >= subgraph[0]) break;
+        if (CanAdd(graph, subgraph, k, n, /*is_index*/ false)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  Kplex<node_t> ToItem(const std::vector<node_t>& subgraph) const {
+    std::vector<node_t> sol;
+    for (size_t i : kplex) {
+      sol.push_back(subgraph[i]);
+    }
+    return sol;
+  }
+
+ protected:
+  bool CanAdd(const Graph* graph, const std::vector<node_t>& subgraph, size_t k,
+              size_t idx, bool is_index = true) const {
+    uint32_t v_cnt = 1;
+    size_t v = is_index ? subgraph[idx] : idx;
+    if (debug_mode) {
+      std::cout << "CAN_ADD " << v << " TO "
+                << absl::StrJoin(ToItem(subgraph), ", ") << std::endl;
+      std::cout << "COUNTERS: " << std::endl;
+      for (size_t i = 0; i < kplex.size(); i++) {
+        std::cout << subgraph[kplex[i]] << " HAS COUNTER "
+                  << (size_t)counters[kplex[i]] << std::endl;
+      }
+    }
+    for (size_t i = 0; i < kplex.size(); i++) {
+      if (v == subgraph[kplex[i]]) {
+        if (debug_mode) std::cout << "NO (in kplex)" << std::endl;
+        return false;
+      }
+      if (!graph->are_neighs(v, subgraph[kplex[i]])) {
+        v_cnt++;
+        if ((size_t)counters[kplex[i]] + 1 > k) {
+          if (debug_mode)
+            std::cout << "NO (counter of " << subgraph[kplex[i]] << ")"
+                      << std::endl;
+          return false;
+        }
+      }
+    }
+    if (v_cnt > k) {
+      if (debug_mode) std::cout << "NO (v_cnt)" << std::endl;
+      return false;
+    }
+    if (debug_mode) std::cout << "YES" << std::endl;
+    return true;
+  }
+};
+
+template <typename Graph>
+class Diam2KplexNode {
+ public:
+  using node_t = typename Graph::node_t;
+  void Clear() { subgraph_ = std::make_shared<std::vector<node_t>>(); }
+  void AddToSubgraph(node_t v) { subgraph_->push_back(v); }
+  const std::vector<node_t>& Subgraph() const { return *subgraph_; }
+
+  bool IsMaximal() const {
+    if (current_impl_ == 0) return impl0_.IsMaximal();
+    throw std::runtime_error("Invalid current implementation!");
+  }
+
+  bool CanPrune(size_t q) const {
+    if (current_impl_ == 0) return impl0_.CanPrune(q);
+    throw std::runtime_error("Invalid current implementation!");
+  }
+
+  bool HasUniversalInExcl(const Graph* graph) const {
+    if (current_impl_ == 0) return impl0_.HasUniversalInExcl(graph, *subgraph_);
+    throw std::runtime_error("Invalid current implementation!");
+  }
+
+  void GetUniversalsAndSortedCands(const Graph* graph,
+                                   std::vector<size_t>* universals,
+                                   std::vector<size_t>* sorted_cands) const {
+    if (current_impl_ == 0)
+      return impl0_.GetUniversalsAndSortedCands(graph, *subgraph_, universals,
+                                                sorted_cands);
+    throw std::runtime_error("Invalid current implementation!");
+  }
+
+  void AddToKplex(const Graph* graph, size_t idx) {
+    if (current_impl_ == 0) return impl0_.AddToKplex(graph, *subgraph_, idx);
+    throw std::runtime_error("Invalid current implementation!");
+  }
+
+  void UpdateCandAndExcl(const Graph* graph,
+                         const std::vector<size_t>& add_to_excl,
+                         const std::vector<bool>& add_to_excl_bitset,
+                         size_t k) {
+    if (current_impl_ == 0)
+      return impl0_.UpdateCandAndExcl(graph, *subgraph_, add_to_excl,
+                                      add_to_excl_bitset, k);
+    throw std::runtime_error("Invalid current implementation!");
+  }
+
+  bool IsReallyMaximal(const Graph* graph, size_t k, size_t q) const {
+    if (current_impl_ == 0)
+      return impl0_.IsReallyMaximal(graph, *subgraph_, k, q);
+    throw std::runtime_error("Invalid current implementation!");
+  }
+
+  Kplex<node_t> ToItem() const {
+    if (current_impl_ == 0) return impl0_.ToItem(*subgraph_);
+    throw std::runtime_error("Invalid current implementation!");
+  }
+
+  void Init(const Graph* graph) {
+    // TODO
+    impl0_.Init(graph, *subgraph_);
+  }
+
+ private:
+  std::shared_ptr<std::vector<node_t>> subgraph_;
+  Diam2KplexNodeImpl<Graph, 0> impl0_;
+  size_t current_impl_ = 0;
 };
 
 template <typename Graph>
 class Diam2KplexEnumeration
-    : public Enumerable<Diam2KplexNode<typename Graph::node_t>,
-                        Kplex<typename Graph::node_t>> {
+    : public Enumerable<Diam2KplexNode<Graph>, Kplex<typename Graph::node_t>> {
  public:
   using node_t = typename Graph::node_t;
   using NodeCallback =
-      typename Enumerable<Diam2KplexNode<typename Graph::node_t>,
+      typename Enumerable<Diam2KplexNode<Graph>,
                           Kplex<typename Graph::node_t>>::NodeCallback;
   explicit Diam2KplexEnumeration(Graph* graph, size_t k, size_t q)
       : graph_(
@@ -54,44 +311,34 @@ class Diam2KplexEnumeration
 
   size_t MaxRoots() override { return graph_->size(); }
 
-  Kplex<node_t> NodeToItem(const Diam2KplexNode<node_t>& node) override {
+  Kplex<node_t> NodeToItem(const Diam2KplexNode<Graph>& node) override {
     return ((const Diam2KplexEnumeration*)this)->NodeToItem(node);
   }
 
-  Kplex<node_t> NodeToItem(const Diam2KplexNode<node_t>& node) const {
-    std::vector<node_t> sol;
-    for (size_t i : node.kplex) {
-      sol.push_back(node.subgraph[i]);
-    }
-    return sol;
+  Kplex<node_t> NodeToItem(const Diam2KplexNode<Graph>& node) const {
+    return node.ToItem();
   }
 
-  bool IsSolution(const Diam2KplexNode<node_t>& node) override {
-    bool ret = node.IsMaximal() && IsReallyMaximal(node);
+  bool IsSolution(const Diam2KplexNode<Graph>& node) override {
+    bool ret = node.IsMaximal() && node.IsReallyMaximal(graph_.get(), k_, q_);
     if (debug_mode && ret) {
       std::cout << "\033[31;1;4mREAL_SOL: "
                 << absl::StrJoin(NodeToItem(node), ", ") << "\033[0m"
                 << std::endl;
     }
+
     return ret;
   }
 
   void GetRoot(size_t v, const NodeCallback& cb) override {
     // TODO: euristica vicini indietro
-    thread_local Diam2KplexNode<node_t> node;
-    node.counters.clear();
-    node.subgraph.clear();
-    node.kplex.clear();
-    node.cands.clear();
-    node.excluded.clear();
-    node.v = v;
+    thread_local Diam2KplexNode<Graph> node;
+    node.Clear();
     thread_local std::vector<bool> subgraph_added(graph_->size());
-    node.subgraph.push_back(v);
-    node.counters.push_back(1);
+    node.AddToSubgraph(v);
     subgraph_added[v] = true;
     for (node_t n : graph_->fwd_neighs(v)) {
-      node.subgraph.push_back(n);
-      node.counters.push_back(0);
+      node.AddToSubgraph(n);
       subgraph_added[n] = true;
     }
     if (k_ != 1) {
@@ -107,240 +354,76 @@ class Diam2KplexEnumeration
       }
       for (node_t n : subgraph_candidates) {
         if (subgraph_counts[n] + 2 * k_ > q_) {
-          node.subgraph.push_back(n);
-          node.counters.push_back(1);
+          node.AddToSubgraph(n);
         }
         subgraph_counts[n] = 0;
       }
       subgraph_candidates.clear();
     }
-    for (node_t n : node.subgraph) subgraph_added[n] = false;
-    node.kplex.push_back(0);
-    for (size_t i = 1; i < node.subgraph.size(); i++) {
-      node.cands.push_back(i);
-    }
+    for (node_t n : node.Subgraph()) subgraph_added[n] = false;
+    node.Init(graph_.get());
     cb(node);
   }
 
-  void ListChildren(const Diam2KplexNode<node_t>& node,
+  void ListChildren(const Diam2KplexNode<Graph>& node,
                     const NodeCallback& cb) override {
-    if (debug_mode && node.kplex.size() == 1) {
-      std::cout << "=============== CHANGE ROOT (" << node.v
+    if (debug_mode && node.ToItem().size() == 1) {
+      std::cout << "=============== CHANGE ROOT (" << node.Subgraph()[0]
                 << ") ===============" << std::endl;
     }
     if (debug_mode) {
-      std::cout << "NODE: " << absl::StrJoin(NodeToItem(node), ", ") << " ";
-      std::cout << "SUBGRAPH: " << absl::StrJoin(node.subgraph, ", ") << " ";
-      std::cout << "KPLEX: " << absl::StrJoin(node.kplex, ", ") << " ";
-      std::cout << "COUNTERS: " << absl::StrJoin(node.counters, ", ") << " ";
-      std::cout << "CANDS: " << absl::StrJoin(node.cands, ", ") << " ";
-      std::cout << "EXCL: " << absl::StrJoin(node.excluded, ", ") << std::endl;
+      std::cout << "NODE: " << absl::StrJoin(node.ToItem(), ", ") << " ";
+      std::cout << "SUBGRAPH: " << absl::StrJoin(node.Subgraph(), ", ")
+                << std::endl;
     }
+
     // Maximal node: no children
     if (node.IsMaximal()) return;
+    if (debug_mode) std::cout << "NOT MAXIMAL" << std::endl;
     // Too few cands
-    if (node.cands.size() + node.kplex.size() < q_) return;
-    thread_local const auto check_neighs = [this, &node](size_t a, size_t b) {
-      return graph_->are_neighs(node.subgraph[a], node.subgraph[b]);
-    };
+    if (node.CanPrune(q_)) return;
+    if (debug_mode) std::cout << "CANNOT PRUNE" << std::endl;
     // Universal node in excluded: no valid children
-    for (size_t u : node.excluded) {
-      if (node.counters[u] != 0) continue;
-      bool is_universal = true;
-      for (size_t v : node.cands) {
-        if (!check_neighs(u, v)) {
-          is_universal = false;
-          break;
-        }
-      }
-      if (is_universal) return;
-    }
+    if (node.HasUniversalInExcl(graph_.get())) return;
+    if (debug_mode) std::cout << "NO UNIVERSAL IN EXCL" << std::endl;
     // Find total counters for nodes in cands.
-    thread_local std::vector<uint32_t> cand_counters;
-    cand_counters.clear();
-    cand_counters.resize(node.subgraph.size());
     thread_local std::vector<size_t> universals;
     universals.clear();
-    for (size_t u : node.cands) {
-      for (size_t v : node.cands) {
-        if (u != v && !check_neighs(u, v)) {
-          cand_counters[u]++;
-        }
-      }
-      if (node.counters[u] == 0 && cand_counters[u] == 0) {
-        universals.push_back(u);
-      }
-    }
+    thread_local std::vector<size_t> sorted_cands;
+    sorted_cands.clear();
+    node.GetUniversalsAndSortedCands(graph_.get(), &universals, &sorted_cands);
+
+    thread_local std::vector<size_t> add_to_excl;
+    thread_local std::vector<bool> add_to_excl_bitset;
+    add_to_excl.clear();
+    add_to_excl_bitset.clear();
+    add_to_excl_bitset.resize(node.Subgraph().size());
+
     // If there is at least one universal node in cands, fast forward.
+    thread_local Diam2KplexNode<Graph> child_node;
     if (!universals.empty()) {
-      if (debug_mode)
-        std::cout << "UNIV: " << absl::StrJoin(universals, ", ") << std::endl;
-      thread_local Diam2KplexNode<node_t> child_node;
       child_node = node;
       for (size_t u : universals) {
-        child_node.kplex.push_back(u);
-        child_node.counters[u]++;
-        for (size_t e : child_node.excluded) {
-          if (!check_neighs(u, e)) {
-            child_node.counters[e]++;
-          }
-        }
+        child_node.AddToKplex(graph_.get(), u);
       }
-      child_node.excluded.clear();
-      for (size_t e : node.excluded) {
-        if (child_node.counters[e] < k_) {
-          child_node.excluded.push_back(e);
-        }
-      }
-      child_node.cands.clear();
-      for (size_t c : node.cands) {
-        if (node.counters[c] != 0 || cand_counters[c] != 0) {
-          child_node.cands.push_back(c);
-        }
-      }
+      child_node.UpdateCandAndExcl(graph_.get(), add_to_excl,
+                                   add_to_excl_bitset, k_);
       cb(child_node);
       return;
     }
-    // Sorted cands
-    thread_local std::vector<size_t> sorted_cands;
-    sorted_cands = node.cands;
-    std::sort(sorted_cands.begin(), sorted_cands.end(),
-              [&](size_t a, size_t b) {
-                return node.counters[a] + cand_counters[a] >
-                       node.counters[b] + cand_counters[b];
-              });
-    thread_local std::vector<size_t> child_potential_excluded;
-    child_potential_excluded = node.excluded;
-    thread_local std::vector<bool> processed_cands(graph_->size());
-    thread_local Diam2KplexNode<node_t> child_node;
-    child_node = node;
     // Non-unary children
     for (size_t c : sorted_cands) {
+      child_node = node;
       /*if (node.counters[c] == 0) continue; TODO: maximality*/
-      child_node.kplex.push_back(c);
-      for (size_t e : child_node.kplex) {
-        if (!check_neighs(c, e)) {
-          child_node.counters[e]++;
-        }
-      }
+      child_node.AddToKplex(graph_.get(), c);
+      child_node.UpdateCandAndExcl(graph_.get(), add_to_excl,
+                                   add_to_excl_bitset, k_);
 
-      child_node.excluded.clear();
-      for (size_t e : child_potential_excluded) {
-        if (CanAdd(child_node.kplex, child_node.counters, e, check_neighs)) {
-          child_node.excluded.push_back(e);
-        }
-      }
-      child_node.cands.clear();
-      for (size_t e : node.cands) {
-        if (!processed_cands[e] &&
-            CanAdd(child_node.kplex, child_node.counters, e, check_neighs)) {
-          child_node.cands.push_back(e);
-        }
-      }
-
-      for (size_t e : child_node.excluded) {
-        if (!check_neighs(c, e)) {
-          child_node.counters[e]++;
-        }
-      }
-      for (size_t e : child_node.cands) {
-        if (!check_neighs(c, e)) {
-          child_node.counters[e]++;
-        }
-      }
       cb(child_node);
-      for (size_t e : child_node.excluded) {
-        if (!check_neighs(c, e)) {
-          child_node.counters[e]--;
-        }
-      }
-      for (size_t e : child_node.cands) {
-        if (!check_neighs(c, e)) {
-          child_node.counters[e]--;
-        }
-      }
-      for (size_t e : child_node.kplex) {
-        if (!check_neighs(c, e)) {
-          child_node.counters[e]--;
-        }
-      }
 
-      child_node.kplex.pop_back();
-      child_potential_excluded.push_back(c);
-      processed_cands[c] = true;
+      add_to_excl.push_back(c);
+      add_to_excl_bitset[c] = true;
     }
-    for (node_t c : sorted_cands) {
-      processed_cands[c] = false;
-    }
-  }
-
- protected:
-  template <typename F>
-  bool CanAdd(const std::vector<size_t>& kplex,
-              const std::vector<uint8_t>& counters, size_t v,
-              const F& check_neighs) const {
-    uint32_t v_cnt = 1;
-    for (size_t i = 0; i < kplex.size(); i++) {
-      if (v == kplex[i]) return false;
-      if (!check_neighs(v, kplex[i])) {
-        v_cnt++;
-        if ((size_t)counters[kplex[i]] + 1 > k_) {
-          return false;
-        }
-      }
-    }
-    if (v_cnt > k_) return false;
-    return true;
-  }
-
-  bool CanAdd(const std::vector<node_t>& subgraph,
-              const std::vector<size_t>& kplex,
-              const std::vector<uint8_t>& counters, node_t v) const {
-    uint32_t v_cnt = 1;
-    for (size_t i = 0; i < kplex.size(); i++) {
-      if (v == subgraph[kplex[i]]) return false;
-      if (!graph_->are_neighs(v, subgraph[kplex[i]])) {
-        v_cnt++;
-        if ((size_t)counters[kplex[i]] + 1 > k_) {
-          return false;
-        }
-      }
-    }
-    if (v_cnt > k_) return false;
-    return true;
-  }
-
-  bool IsReallyMaximal(const Diam2KplexNode<node_t>& node) const {
-    if (node.kplex.size() < q_) return false;
-    // TODO: diameter
-    if (k_ > 2) throw std::runtime_error("ciao ciao");
-    if (k_ == 2 && node.kplex.size() == 2) {
-      if (!graph_->are_neighs(node.subgraph[node.kplex[0]],
-                              node.subgraph[node.kplex[1]])) {
-        return false;
-      }
-    }
-    if (debug_mode) {
-      std::cout << "SOL: " << absl::StrJoin(NodeToItem(node), ", ")
-                << std::endl;
-      for (size_t i : node.kplex)
-        std::cout << node.subgraph[i] << " -> " << (size_t)node.counters[i]
-                  << std::endl;
-    }
-    // Check neighs of the first k nodes that are smaller than v.
-    for (size_t i = 0; i < k_ && i < node.kplex.size(); i++) {
-      for (node_t n : graph_->neighs(node.subgraph[node.kplex[i]])) {
-        if (n >= node.v) break;
-        if (debug_mode) std::cout << "ADD: " << n << std::endl;
-        if (CanAdd(node.subgraph, node.kplex, node.counters, n)) {
-          if (debug_mode) std::cout << "CAN ADD" << std::endl;
-          return false;
-        }
-        if (debug_mode) std::cout << "CANNOT ADD" << std::endl;
-      }
-    }
-
-    return true;
   }
 
  private:

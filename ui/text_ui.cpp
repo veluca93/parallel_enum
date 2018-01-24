@@ -133,7 +133,8 @@ int CKplexMain(const std::string& input_file) {
 
 template <typename node_t>
 int D2KplexMain(const std::string& input_file) {
-  auto enumerator = MakeEnumerator<Diam2KplexNode<node_t>, Kplex<node_t>>();
+  auto enumerator = MakeEnumerator<Diam2KplexNode<fast_graph_t<node_t, void>>,
+                                   Kplex<node_t>>();
   auto graph = ReadFastGraph<node_t, void>(input_file);
   enumerator->ReadDone();
   enumerator->template MakeEnumerableSystemAndRun<
