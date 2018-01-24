@@ -17,6 +17,17 @@ cc_library(
 )
 
 cc_library(
+    name = "diam2kplex",
+    srcs = ["diam2kplex.cpp"],
+    hdrs = ["diam2kplex.hpp"],
+    deps = [
+        ":enumerable",
+        "//permute",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+cc_library(
     name = "commutable",
     hdrs = ["commutable.hpp"],
     deps = [

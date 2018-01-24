@@ -1,6 +1,7 @@
 #include "absl/memory/memory.h"
 #include "enumerable/ckplex.hpp"
 #include "enumerable/clique.hpp"
+#include "enumerable/diam2kplex.hpp"
 #include "enumerator/parallel_tbb.hpp"
 #include "enumerator/sequential.hpp"
 //#include "enumerator/parallel_pthreads.hpp"
@@ -23,9 +24,11 @@ DEFINE_int32(
                                               // caso di
                                               // enumerator=parallel
 DEFINE_int32(k, 2, "value of k for the k-plexes");
+DEFINE_int32(q, 1, "only find diam-2 kplexes at least this big");
 
-DEFINE_string(system, "clique",
-              "what should be enumerated. Possible values: clique, ckplex");
+DEFINE_string(
+    system, "clique",
+    "what should be enumerated. Possible values: clique, ckplex, d2kplex");
 DEFINE_string(graph_format, "nde",
               "format of input graphs. Only makes sense for systems defined on "
               "graphs. Possible values: nde, oly");
@@ -46,7 +49,7 @@ bool ValidateEnumerator(const char* flagname, const std::string& value) {
 DEFINE_validator(enumerator, &ValidateEnumerator);
 
 bool ValidateSystem(const char* flagname, const std::string& value) {
-  if (value == "clique" || value == "ckplex") {
+  if (value == "clique" || value == "ckplex" || value == "d2kplex") {
     return true;
   }
   printf("Invalid value for --%s: %s\n", flagname, value.c_str());
@@ -128,6 +131,20 @@ int CKplexMain(const std::string& input_file) {
   return 0;
 }
 
+template <typename node_t>
+int D2KplexMain(const std::string& input_file) {
+  auto enumerator = MakeEnumerator<Diam2KplexNode<node_t>, Kplex<node_t>>();
+  auto graph = ReadFastGraph<node_t, void>(input_file);
+  enumerator->ReadDone();
+  enumerator->template MakeEnumerableSystemAndRun<
+      Diam2KplexEnumeration<fast_graph_t<node_t, void>>>(graph.get(), FLAGS_k,
+                                                         FLAGS_q);
+  if (!FLAGS_quiet) {
+    enumerator->PrintStats();
+  }
+  return 0;
+}
+
 int main(int argc, char** argv) {
   gflags::SetUsageMessage(
       "Enumerates the maximal elements in a set system defined by a graph "
@@ -149,5 +166,13 @@ int main(int argc, char** argv) {
     }
     return FLAGS_huge_graph ? CKplexMain<uint64_t>(argv[1])
                             : CKplexMain<uint32_t>(argv[1]);
+  }
+  if (FLAGS_system == "d2kplex") {
+    if (argc != 2) {
+      fprintf(stderr, "You should specify exactly one graph\n");
+      return 1;
+    }
+    return FLAGS_huge_graph ? D2KplexMain<uint64_t>(argv[1])
+                            : D2KplexMain<uint32_t>(argv[1]);
   }
 }

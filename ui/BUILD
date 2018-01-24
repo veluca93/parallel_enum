@@ -14,6 +14,7 @@ cc_binary(
     deps = [
         "//enumerable:ckplex",
         "//enumerable:clique",
+        "//enumerable:diam2kplex",
         "//enumerator:distributed",
         "//enumerator:parallel",
         "//enumerator:sequential",
