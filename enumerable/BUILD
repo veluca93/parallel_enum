@@ -23,6 +23,7 @@ cc_library(
     deps = [
         ":enumerable",
         "//permute",
+        "//util:bitset",
         "@com_google_absl//absl/strings",
     ],
 )

@@ -6,6 +6,7 @@
 #include "absl/strings/str_join.h"
 #include "enumerable/enumerable.hpp"
 #include "permute/permute.hpp"
+#include "util/bitset.hpp"
 #include "util/graph.hpp"
 
 #ifdef DEGENERACY
@@ -18,10 +19,70 @@ static const constexpr bool debug_mode = false;
 template <typename node_t>
 using Kplex = std::vector<node_t>;
 
+template <typename Node, typename Graph>
+void ListChildren(const Node& node, Node& child_node, size_t k, size_t q,
+                  Graph* graph,
+                  const std::vector<typename Graph::node_t>& subgraph,
+                  const std::function<bool()>& cb) {
+  if (debug_mode && node.ToItem(subgraph).size() == 1) {
+    std::cout << "=============== CHANGE ROOT (" << subgraph[0]
+              << ") ===============" << std::endl;
+  }
+  if (debug_mode) {
+    std::cout << "NODE: " << absl::StrJoin(node.ToItem(subgraph), ", ") << " ";
+    std::cout << "SUBGRAPH: " << absl::StrJoin(subgraph, ", ") << std::endl;
+  }
+
+  // Maximal node: no children
+  if (node.IsMaximal()) return;
+  if (debug_mode) std::cout << "NOT MAXIMAL" << std::endl;
+  // Too few cands
+  if (node.CanPrune(q)) return;
+  if (debug_mode) std::cout << "CANNOT PRUNE" << std::endl;
+  // Universal node in excluded: no valid children
+  if (node.HasUniversalInExcl(graph, subgraph)) return;
+  if (debug_mode) std::cout << "NO UNIVERSAL IN EXCL" << std::endl;
+  // Find total counters for nodes in cands.
+  thread_local std::vector<size_t> universals;
+  universals.clear();
+  thread_local std::vector<size_t> sorted_cands;
+  sorted_cands.clear();
+  node.GetUniversalsAndSortedCands(graph, subgraph, &universals, &sorted_cands);
+
+  thread_local std::vector<size_t> add_to_excl;
+  thread_local std::vector<bool> add_to_excl_bitset;
+  add_to_excl.clear();
+  add_to_excl_bitset.clear();
+  add_to_excl_bitset.resize(subgraph.size());
+
+  // If there is at least one universal node in cands, fast forward.
+  if (!universals.empty()) {
+    child_node = node;
+    for (size_t u : universals) {
+      child_node.AddToKplex(graph, subgraph, u);
+    }
+    child_node.UpdateCandAndExcl(graph, subgraph, add_to_excl,
+                                 add_to_excl_bitset, k);
+    cb();
+    return;
+  }
+  // Non-unary children
+  for (size_t c : sorted_cands) {
+    child_node = node;
+    /*if (node.counters[c] == 0) continue; TODO: maximality*/
+    child_node.AddToKplex(graph, subgraph, c);
+    child_node.UpdateCandAndExcl(graph, subgraph, add_to_excl,
+                                 add_to_excl_bitset, k);
+
+    if (!cb()) return;
+
+    add_to_excl.push_back(c);
+    add_to_excl_bitset[c] = true;
+  }
+}
+
 template <typename Graph, size_t size>
-struct Diam2KplexNodeImpl {
-  // TODO
-};
+struct Diam2KplexNodeImpl {};
 
 template <typename Graph>
 struct Diam2KplexNodeImpl<Graph, 0> {
@@ -152,6 +213,7 @@ struct Diam2KplexNodeImpl<Graph, 0> {
 
   bool IsReallyMaximal(const Graph* graph, const std::vector<node_t>& subgraph,
                        size_t k, size_t q) const {
+    if (!IsMaximal()) return false;
     if (kplex.size() < q) return false;
     // TODO: diameter
     if (k > 2) throw std::runtime_error("ciao ciao");
@@ -226,45 +288,6 @@ class Diam2KplexNode {
   void AddToSubgraph(node_t v) { subgraph_->push_back(v); }
   const std::vector<node_t>& Subgraph() const { return *subgraph_; }
 
-  bool IsMaximal() const {
-    if (current_impl_ == 0) return impl0_.IsMaximal();
-    throw std::runtime_error("Invalid current implementation!");
-  }
-
-  bool CanPrune(size_t q) const {
-    if (current_impl_ == 0) return impl0_.CanPrune(q);
-    throw std::runtime_error("Invalid current implementation!");
-  }
-
-  bool HasUniversalInExcl(const Graph* graph) const {
-    if (current_impl_ == 0) return impl0_.HasUniversalInExcl(graph, *subgraph_);
-    throw std::runtime_error("Invalid current implementation!");
-  }
-
-  void GetUniversalsAndSortedCands(const Graph* graph,
-                                   std::vector<size_t>* universals,
-                                   std::vector<size_t>* sorted_cands) const {
-    if (current_impl_ == 0)
-      return impl0_.GetUniversalsAndSortedCands(graph, *subgraph_, universals,
-                                                sorted_cands);
-    throw std::runtime_error("Invalid current implementation!");
-  }
-
-  void AddToKplex(const Graph* graph, size_t idx) {
-    if (current_impl_ == 0) return impl0_.AddToKplex(graph, *subgraph_, idx);
-    throw std::runtime_error("Invalid current implementation!");
-  }
-
-  void UpdateCandAndExcl(const Graph* graph,
-                         const std::vector<size_t>& add_to_excl,
-                         const std::vector<bool>& add_to_excl_bitset,
-                         size_t k) {
-    if (current_impl_ == 0)
-      return impl0_.UpdateCandAndExcl(graph, *subgraph_, add_to_excl,
-                                      add_to_excl_bitset, k);
-    throw std::runtime_error("Invalid current implementation!");
-  }
-
   bool IsReallyMaximal(const Graph* graph, size_t k, size_t q) const {
     if (current_impl_ == 0)
       return impl0_.IsReallyMaximal(graph, *subgraph_, k, q);
@@ -277,8 +300,21 @@ class Diam2KplexNode {
   }
 
   void Init(const Graph* graph) {
-    // TODO
+    current_impl_ = 0;
     impl0_.Init(graph, *subgraph_);
+  }
+
+  void ListChildren(Diam2KplexNode<Graph>& child_node, size_t k, size_t q,
+                    Graph* graph, const std::function<bool()>& cb) const {
+    child_node.current_impl_ = current_impl_;
+    child_node.subgraph_ = subgraph_;
+    switch (current_impl_) {
+      case 0:
+        return ::ListChildren(impl0_, child_node.impl0_, k, q, graph,
+                              *subgraph_, cb);
+      default:
+        throw std::runtime_error("Invalid current implementation!");
+    }
   }
 
  private:
@@ -320,7 +356,7 @@ class Diam2KplexEnumeration
   }
 
   bool IsSolution(const Diam2KplexNode<Graph>& node) override {
-    bool ret = node.IsMaximal() && node.IsReallyMaximal(graph_.get(), k_, q_);
+    bool ret = node.IsReallyMaximal(graph_.get(), k_, q_);
     if (debug_mode && ret) {
       std::cout << "\033[31;1;4mREAL_SOL: "
                 << absl::StrJoin(NodeToItem(node), ", ") << "\033[0m"
@@ -367,63 +403,10 @@ class Diam2KplexEnumeration
 
   void ListChildren(const Diam2KplexNode<Graph>& node,
                     const NodeCallback& cb) override {
-    if (debug_mode && node.ToItem().size() == 1) {
-      std::cout << "=============== CHANGE ROOT (" << node.Subgraph()[0]
-                << ") ===============" << std::endl;
-    }
-    if (debug_mode) {
-      std::cout << "NODE: " << absl::StrJoin(node.ToItem(), ", ") << " ";
-      std::cout << "SUBGRAPH: " << absl::StrJoin(node.Subgraph(), ", ")
-                << std::endl;
-    }
-
-    // Maximal node: no children
-    if (node.IsMaximal()) return;
-    if (debug_mode) std::cout << "NOT MAXIMAL" << std::endl;
-    // Too few cands
-    if (node.CanPrune(q_)) return;
-    if (debug_mode) std::cout << "CANNOT PRUNE" << std::endl;
-    // Universal node in excluded: no valid children
-    if (node.HasUniversalInExcl(graph_.get())) return;
-    if (debug_mode) std::cout << "NO UNIVERSAL IN EXCL" << std::endl;
-    // Find total counters for nodes in cands.
-    thread_local std::vector<size_t> universals;
-    universals.clear();
-    thread_local std::vector<size_t> sorted_cands;
-    sorted_cands.clear();
-    node.GetUniversalsAndSortedCands(graph_.get(), &universals, &sorted_cands);
-
-    thread_local std::vector<size_t> add_to_excl;
-    thread_local std::vector<bool> add_to_excl_bitset;
-    add_to_excl.clear();
-    add_to_excl_bitset.clear();
-    add_to_excl_bitset.resize(node.Subgraph().size());
-
-    // If there is at least one universal node in cands, fast forward.
+    // TODO
     thread_local Diam2KplexNode<Graph> child_node;
-    if (!universals.empty()) {
-      child_node = node;
-      for (size_t u : universals) {
-        child_node.AddToKplex(graph_.get(), u);
-      }
-      child_node.UpdateCandAndExcl(graph_.get(), add_to_excl,
-                                   add_to_excl_bitset, k_);
-      cb(child_node);
-      return;
-    }
-    // Non-unary children
-    for (size_t c : sorted_cands) {
-      child_node = node;
-      /*if (node.counters[c] == 0) continue; TODO: maximality*/
-      child_node.AddToKplex(graph_.get(), c);
-      child_node.UpdateCandAndExcl(graph_.get(), add_to_excl,
-                                   add_to_excl_bitset, k_);
-
-      cb(child_node);
-
-      add_to_excl.push_back(c);
-      add_to_excl_bitset[c] = true;
-    }
+    node.ListChildren(child_node, k_, q_, graph_.get(),
+                      [&]() { return cb(child_node); });
   }
 
  private:

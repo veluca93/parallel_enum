@@ -32,6 +32,11 @@ cc_library(
 )
 
 cc_library(
+    name = "bitset",
+    hdrs = ["bitset.hpp"],
+)
+
+cc_library(
     name = "binary_search",
     srcs = ["binary_search.cpp"],
     hdrs = ["binary_search.hpp"],
