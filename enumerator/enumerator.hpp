@@ -42,6 +42,7 @@ class Enumerator {
                 run_done_time_ - run_start_time_)
                 .count());
     fprintf(out, "Solutions found: %lu\n", (ssize_t)solutions_found_);
+    fprintf(out, "Computational tree size: %lu\n", (ssize_t)tree_size_);
     fprintf(out, "Solutions per ms: %f\n",
             (float)solutions_found_ /
                 std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -63,6 +64,7 @@ class Enumerator {
 
   virtual void ReportSolution(Enumerable<Node, Item>* system,
                               const Node& node) {
+    tree_size_++;
     if (!system->IsSolution(node)) return;
     solutions_found_++;
     if (cb_) {
@@ -83,6 +85,7 @@ class Enumerator {
   std::chrono::high_resolution_clock::time_point run_start_time_;
   std::chrono::high_resolution_clock::time_point run_done_time_;
   std::atomic<ssize_t> solutions_found_{0};
+  std::atomic<ssize_t> tree_size_{0};
 };
 
 #endif  // ENUMERATOR_ENUMERATOR_H

@@ -38,6 +38,7 @@ DEFINE_bool(huge_graph, false, "use 64 bit integers to count nodes");
 DEFINE_bool(one_based, false,
             "whether the graph is one based. Used only by oly format.");
 DEFINE_bool(quiet, false, "do not show any non-fatal output");
+DEFINE_bool(enable_pivoting, true, "enable pivoting in d2kplex");
 
 bool ValidateEnumerator(const char* flagname, const std::string& value) {
   if (value == "sequential" || value == "parallel" || value == "distributed") {
@@ -138,8 +139,8 @@ int D2KplexMain(const std::string& input_file) {
   auto graph = ReadFastGraph<node_t, void>(input_file);
   enumerator->ReadDone();
   enumerator->template MakeEnumerableSystemAndRun<
-      Diam2KplexEnumeration<fast_graph_t<node_t, void>>>(graph.get(), FLAGS_k,
-                                                         FLAGS_q);
+      Diam2KplexEnumeration<fast_graph_t<node_t, void>>>(
+      graph.get(), FLAGS_k, FLAGS_q, FLAGS_enable_pivoting);
   if (!FLAGS_quiet) {
     enumerator->PrintStats();
   }

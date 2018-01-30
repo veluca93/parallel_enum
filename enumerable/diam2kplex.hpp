@@ -21,7 +21,7 @@ using Kplex = std::vector<node_t>;
 
 template <typename Node, typename Graph>
 void ListChildren(const Node& node, Node& child_node, size_t k, size_t q,
-                  Graph* graph,
+                  bool enable_pivoting, Graph* graph,
                   const std::vector<typename Graph::node_t>& subgraph,
                   const std::function<bool()>& cb) {
   if (debug_mode && node.ToItem(subgraph).size() == 1) {
@@ -41,36 +41,37 @@ void ListChildren(const Node& node, Node& child_node, size_t k, size_t q,
   if (debug_mode) std::cout << "CANNOT PRUNE" << std::endl;
   // Universal node in excluded: no valid children
   if (node.HasUniversalInExcl(graph, subgraph)) return;
-  if (debug_mode) std::cout << "NO UNIVERSAL IN EXCL" << std::endl;
+  // if (debug_mode) std::cout << "NO UNIVERSAL IN EXCL" << std::endl;
   // Find total counters for nodes in cands.
   thread_local std::vector<size_t> universals;
   universals.clear();
   thread_local std::vector<size_t> sorted_cands;
   sorted_cands.clear();
-  node.GetUniversalsAndSortedCands(graph, subgraph, &universals, &sorted_cands);
+  node.GetCands(graph, subgraph, enable_pivoting, k, &universals,
+                &sorted_cands);
 
+  // If there is at least one universal node in cands, fast forward.
   thread_local std::vector<size_t> add_to_excl;
   thread_local std::vector<bool> add_to_excl_bitset;
   add_to_excl.clear();
   add_to_excl_bitset.clear();
   add_to_excl_bitset.resize(subgraph.size());
 
-  // If there is at least one universal node in cands, fast forward.
   if (!universals.empty()) {
     child_node = node;
     for (size_t u : universals) {
-      child_node.AddToKplex(graph, subgraph, u);
+      child_node.AddToKplex(graph, subgraph, u, k);
     }
     child_node.UpdateCandAndExcl(graph, subgraph, add_to_excl,
                                  add_to_excl_bitset, k);
     cb();
     return;
   }
+
   // Non-unary children
   for (size_t c : sorted_cands) {
     child_node = node;
-    /*if (node.counters[c] == 0) continue; TODO: maximality*/
-    child_node.AddToKplex(graph, subgraph, c);
+    child_node.AddToKplex(graph, subgraph, c, k);
     child_node.UpdateCandAndExcl(graph, subgraph, add_to_excl,
                                  add_to_excl_bitset, k);
 
@@ -89,17 +90,22 @@ struct Diam2KplexNodeImpl<Graph, 0> {
   using node_t = typename Graph::node_t;
   std::vector<size_t> kplex;
   std::vector<uint8_t> counters;
+  std::vector<size_t> non_neighs;
   std::vector<size_t> cands;
   std::vector<size_t> excluded;
-  void Init(const Graph* graph, const std::vector<node_t>& subgraph) {
+  void Init(const Graph* graph, const std::vector<node_t>& subgraph, size_t k) {
     kplex.clear();
     cands.clear();
     excluded.clear();
     counters.clear();
+    non_neighs.clear();
     kplex.push_back(0);
     counters.resize(subgraph.size());
+    non_neighs.resize(k * subgraph.size());
     for (size_t i = 0; i < subgraph.size(); i++) {
-      counters[i] = !graph->are_neighs(subgraph[0], subgraph[i]);
+      if (!graph->are_neighs(subgraph[0], subgraph[i])) {
+        non_neighs[k * i + counters[i]++] = 0;
+      }
     }
     if (debug_mode) {
       std::cout << "SUBGRAPH FOR " << subgraph[0] << std::endl;
@@ -133,10 +139,10 @@ struct Diam2KplexNodeImpl<Graph, 0> {
     return false;
   }
 
-  void GetUniversalsAndSortedCands(const Graph* graph,
-                                   const std::vector<node_t>& subgraph,
-                                   std::vector<size_t>* universals,
-                                   std::vector<size_t>* sorted_cands) const {
+  void GetCands(const Graph* graph, const std::vector<node_t>& subgraph,
+                bool enable_pivoting, size_t k, std::vector<size_t>* universals,
+                std::vector<size_t>* real_cands) const {
+    if (cands.size() == 0) return;
     thread_local std::vector<uint32_t> cand_counters;
     cand_counters.clear();
     cand_counters.resize(subgraph.size());
@@ -150,16 +156,56 @@ struct Diam2KplexNodeImpl<Graph, 0> {
         universals->push_back(u);
       }
     }
-    *sorted_cands = cands;
-    std::sort(sorted_cands->begin(), sorted_cands->end(),
-              [&](size_t a, size_t b) {
-                return counters[a] + cand_counters[a] >
-                       counters[b] + cand_counters[b];
-              });
+    if (!universals->empty()) return;
+    if (enable_pivoting) {
+      size_t best = cands[0];
+      size_t best_not_cuts = cands.size();
+      auto not_cuts = [&](size_t u, const std::function<void(size_t)>& cb) {
+        for (size_t v : cands) {
+          if (!graph->are_neighs(subgraph[u], subgraph[v])) {
+            cb(v);
+            continue;
+          }
+          bool ok = true;
+          if (k != 1) {
+            for (size_t i = k * u; i < k * u + counters[u]; i++) {
+              if (!graph->are_neighs(subgraph[v], subgraph[non_neighs[i]])) {
+                ok = false;
+                break;
+              }
+            }
+          }
+          if (!ok) cb(v);
+        }
+      };
+      for (size_t u : cands) {
+        size_t count = 0;
+        not_cuts(u, [&count](size_t v) { count++; });
+        if (count < best_not_cuts) {
+          best = u;
+          best_not_cuts = count;
+        }
+      }
+      for (size_t u : excluded) {
+        size_t count = 0;
+        not_cuts(u, [&count](size_t v) { count++; });
+        if (count < best_not_cuts) {
+          best = u;
+          best_not_cuts = count;
+        }
+      }
+      real_cands->clear();
+      not_cuts(best, [real_cands](size_t v) { real_cands->push_back(v); });
+    } else {
+      *real_cands = cands;
+    }
+    std::sort(real_cands->begin(), real_cands->end(), [&](size_t a, size_t b) {
+      return counters[a] + cand_counters[a] > counters[b] + cand_counters[b];
+    });
   }
 
   void AddToKplex(const Graph* graph, const std::vector<node_t>& subgraph,
-                  size_t c) {
+                  size_t c, size_t k) {
     kplex.push_back(c);
     if (debug_mode) {
       std::cout << "NEW KPLEX: " << absl::StrJoin(ToItem(subgraph), ", ")
@@ -171,6 +217,9 @@ struct Diam2KplexNodeImpl<Graph, 0> {
     }
     for (size_t e = 0; e < subgraph.size(); e++) {
       if (!graph->are_neighs(subgraph[c], subgraph[e])) {
+        if (counters[e] < k) {
+          non_neighs[k * e + counters[e]] = c;
+        }
         counters[e]++;
       }
     }
@@ -299,19 +348,20 @@ class Diam2KplexNode {
     throw std::runtime_error("Invalid current implementation!");
   }
 
-  void Init(const Graph* graph) {
+  void Init(const Graph* graph, size_t k) {
     current_impl_ = 0;
-    impl0_.Init(graph, *subgraph_);
+    impl0_.Init(graph, *subgraph_, k);
   }
 
   void ListChildren(Diam2KplexNode<Graph>& child_node, size_t k, size_t q,
-                    Graph* graph, const std::function<bool()>& cb) const {
+                    bool enable_pivoting, Graph* graph,
+                    const std::function<bool()>& cb) const {
     child_node.current_impl_ = current_impl_;
     child_node.subgraph_ = subgraph_;
     switch (current_impl_) {
       case 0:
-        return ::ListChildren(impl0_, child_node.impl0_, k, q, graph,
-                              *subgraph_, cb);
+        return ::ListChildren(impl0_, child_node.impl0_, k, q, enable_pivoting,
+                              graph, *subgraph_, cb);
       default:
         throw std::runtime_error("Invalid current implementation!");
     }
@@ -331,7 +381,8 @@ class Diam2KplexEnumeration
   using NodeCallback =
       typename Enumerable<Diam2KplexNode<Graph>,
                           Kplex<typename Graph::node_t>>::NodeCallback;
-  explicit Diam2KplexEnumeration(Graph* graph, size_t k, size_t q)
+  explicit Diam2KplexEnumeration(Graph* graph, size_t k, size_t q,
+                                 bool enable_pivoting)
       : graph_(
 #ifndef DEGENERACY
             graph->Clone()
@@ -340,7 +391,8 @@ class Diam2KplexEnumeration
 #endif
                 ),
         k_(k),
-        q_(q) {
+        q_(q),
+        enable_pivoting_(enable_pivoting) {
   }
 
   void SetUp() override {}
@@ -397,15 +449,14 @@ class Diam2KplexEnumeration
       subgraph_candidates.clear();
     }
     for (node_t n : node.Subgraph()) subgraph_added[n] = false;
-    node.Init(graph_.get());
+    node.Init(graph_.get(), k_);
     cb(node);
   }
 
   void ListChildren(const Diam2KplexNode<Graph>& node,
                     const NodeCallback& cb) override {
-    // TODO
     thread_local Diam2KplexNode<Graph> child_node;
-    node.ListChildren(child_node, k_, q_, graph_.get(),
+    node.ListChildren(child_node, k_, q_, enable_pivoting_, graph_.get(),
                       [&]() { return cb(child_node); });
   }
 
@@ -413,6 +464,7 @@ class Diam2KplexEnumeration
   std::unique_ptr<Graph> graph_;
   const size_t k_;
   const size_t q_;
+  const bool enable_pivoting_;
 };
 
 extern template class Diam2KplexEnumeration<fast_graph_t<uint32_t, void>>;
