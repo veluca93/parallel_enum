@@ -4,7 +4,9 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <iomanip>
 #include <memory>
+#include <mutex>
 
 #include "absl/memory/memory.h"
 #include "enumerable/enumerable.hpp"
@@ -23,6 +25,7 @@ class Enumerator {
   // Call this to start the enumeration.
   void Run(Enumerable<Node, Item>* system) {
     run_start_time_ = std::chrono::high_resolution_clock::now();
+    print_time_ = run_start_time_;
     RunInternal(system);
     run_done_time_ = std::chrono::high_resolution_clock::now();
   }
@@ -67,6 +70,13 @@ class Enumerator {
     tree_size_++;
     if (!system->IsSolution(node)) return;
     solutions_found_++;
+#ifdef PRINT_PROGRESS
+    if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - print_time_).count() > 1000) {
+        std::unique_lock<std::mutex> lck(m_);
+        print_time_ = std::chrono::high_resolution_clock::now();
+        std::cout << std::setw(30) << solutions_found_ << " solutions found\r" << std::flush;
+    }
+#endif
     if (cb_) {
       return cb_(system->NodeToItem(node));
     }
@@ -83,9 +93,11 @@ class Enumerator {
   std::chrono::high_resolution_clock::time_point start_time_;
   std::chrono::high_resolution_clock::time_point read_done_time_;
   std::chrono::high_resolution_clock::time_point run_start_time_;
+  std::chrono::high_resolution_clock::time_point print_time_;
   std::chrono::high_resolution_clock::time_point run_done_time_;
   std::atomic<ssize_t> solutions_found_{0};
   std::atomic<ssize_t> tree_size_{0};
+  std::mutex m_;
 };
 
 #endif  // ENUMERATOR_ENUMERATOR_H

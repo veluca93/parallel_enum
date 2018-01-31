@@ -23,6 +23,9 @@ DEFINE_int32(
                                               // renderlo valido solo in
                                               // caso di
                                               // enumerator=parallel
+DEFINE_int32(chunks_per_node, 100, "number of roots chunks "
+             "to be scheduled to each computing node "
+             "(only valid for distributed case) (default: 100)");
 DEFINE_int32(k, 2, "value of k for the k-plexes");
 DEFINE_int32(q, 1, "only find diam-2 kplexes at least this big");
 
@@ -93,7 +96,7 @@ std::unique_ptr<Enumerator<Node, Item>> MakeEnumerator() {
     return absl::make_unique<ParallelPthreadsSteal<Node, Item>>(FLAGS_n);
   } else if (FLAGS_enumerator == "distributed") {
 #ifdef PARALLELENUM_USE_MPI
-    return absl::make_unique<DistributedMPI<Node, Item>>(FLAGS_n);
+    return absl::make_unique<DistributedMPI<Node, Item>>(FLAGS_n, FLAGS_chunks_per_node);
 #else
     throw std::runtime_error(
         "To run distributed version, run "

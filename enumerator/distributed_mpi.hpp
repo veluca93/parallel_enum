@@ -12,15 +12,9 @@
 #define DEBUG(x)
 #endif
 
-// How large is each chunk where the nodes search for roots
-// (o means static partitioning, i.e. as large as possible)
-#ifndef DISTRIBUTED_MPI_GRAIN
-#define DISTRIBUTED_MPI_GRAIN 1
-#endif
-
 typedef enum{
     TAG_STATS = 0, // Termination stats
-    TAG_RANGE_REQUEST = 1, // Range requests (if DISTRIBUTED_MPI_GRAIN != 0)
+    TAG_RANGE_REQUEST = 1, // Range requests (if chunksPerNode != 1)
 }DistributedEnumTags;
 
 static std::pair<size_t, size_t> GetNewRange(){
@@ -55,8 +49,9 @@ private:
     int _nthreads;
     int _rank;
     int _worldSize;
+    int _chunksPerNode;
 public:
-    DistributedMPI(int nthreads): _nthreads(nthreads), _rank(0), _worldSize(0){
+    DistributedMPI(int nthreads, uint chunksPerNode): _nthreads(nthreads), _rank(0), _worldSize(0), _chunksPerNode(chunksPerNode){
         ;
     }
 protected:
@@ -79,81 +74,82 @@ protected:
     }
 
     size_t maxRoots, rootsPerNode, nextRangeStart = 0, rangeEnd;
+    int numWorkers;
     maxRoots = system->MaxRoots();
-#if DISTRIBUTED_MPI_GRAIN
-    std::thread* t = NULL;
-    if(_rank == 0){
+    if(_chunksPerNode > 1){
+      std::thread* t = NULL;
+      numWorkers = _worldSize - 1; // -1 because rank 0 doesn't perform computation
+      if(_rank == 0){
         // Spawn thread
         t = new std::thread([&](){
-            rootsPerNode = DISTRIBUTED_MPI_GRAIN;
-            if(rootsPerNode > (maxRoots / _worldSize)){
-                rootsPerNode = (maxRoots / _worldSize) + 1;
+          rootsPerNode = maxRoots / (_chunksPerNode * numWorkers);
+          while(nextRangeStart < maxRoots){
+            rangeEnd = nextRangeStart + rootsPerNode;
+            if(rangeEnd > maxRoots){
+              rangeEnd = maxRoots;
             }
-            while(nextRangeStart < maxRoots){
-                rangeEnd = nextRangeStart + rootsPerNode;
-                if(rangeEnd > maxRoots){
-                    rangeEnd = maxRoots;
-                }
-                WaitRangeRequest(nextRangeStart, rangeEnd);
-                nextRangeStart = rangeEnd;
-            }
-            // -1 because rank 0 doesn't perform computation
-            size_t terminationsToSend = _worldSize - 1;
-            while(terminationsToSend){
-                // If start >= maxRoots it means that there are no more roots.
-                WaitRangeRequest(maxRoots, 0);
-                --terminationsToSend;
-            }
+            WaitRangeRequest(nextRangeStart, rangeEnd);
+            nextRangeStart = rangeEnd;
+          }
+          assert(nextRangeStart == maxRoots);            
+          size_t terminationsToSend = numWorkers;
+          while(terminationsToSend){
+            // If start >= maxRoots it means that there are no more roots.
+            WaitRangeRequest(maxRoots, 0);
+            --terminationsToSend;
+          }
         });
-    }
+      }
 
-    if(_rank != 0){
+      if(_rank != 0){
         // Request the first batch of roots.
         std::pair<size_t, size_t> range = GetNewRange();
-        DEBUG(" pid " << getpid() << " processing between " << range.first << " and " << range.second);
+        DEBUG("Rank " << _rank << " processing between " << range.first << " and " << range.second);
         auto tmp = absl::make_unique<ParallelPthreadsSteal<Node, Item>>(_nthreads, range.first, range.second);
         NewRange nr = GetNewRange;
         tmp->SetMoreRootsCallback(&nr);
         tmp->Run(system);
         Enumerator<Node, Item>::solutions_found_ = tmp->GetSolutionsFound();
-        DEBUG(" pid " << getpid() << " terminated at " << time(NULL));
-    }
-
-    if(_rank == 0){
+        DEBUG("Rank " << _rank << " terminated at " << time(NULL));
+      }
+  
+      if(_rank == 0){
         t->join();
-    }
-#else
-    rootsPerNode = maxRoots / _worldSize;
-    size_t surplus = maxRoots % _worldSize;
-    for(int i = 0; i < _worldSize; i++){
+      }
+    }else{
+      // TODO We could remove this special case.
+      numWorkers = _worldSize;
+      rootsPerNode = maxRoots / numWorkers;
+      size_t surplus = maxRoots % numWorkers;
+      for(int i = 0; i < numWorkers; i++){
         rangeEnd = nextRangeStart + rootsPerNode;
         if(surplus){
-            ++rangeEnd;
-            --surplus;
+          ++rangeEnd;
+          --surplus;
         }
         // If I am this one..
         if(i == _rank){
-            DEBUG("Rank " << i << " pid " << getpid() << " processing between " << nextRangeStart << " and " << rangeEnd);
-            auto tmp = absl::make_unique<ParallelPthreadsSteal<Node, Item>>(_nthreads, nextRangeStart, rangeEnd);
-            tmp->Run(system);
-            Enumerator<Node, Item>::solutions_found_ = tmp->GetSolutionsFound();
-            DEBUG("Rank " << i << " pid " << getpid() << " terminated at " << time(NULL));
+          DEBUG("Rank " << i << " pid " << getpid() << " processing between " << nextRangeStart << " and " << rangeEnd);
+          auto tmp = absl::make_unique<ParallelPthreadsSteal<Node, Item>>(_nthreads, nextRangeStart, rangeEnd);
+          tmp->Run(system);
+          Enumerator<Node, Item>::solutions_found_ = tmp->GetSolutionsFound();
+          DEBUG("Rank " << i << " pid " << getpid() << " terminated at " << time(NULL));
         }
         nextRangeStart = rangeEnd;
+      }
+      assert(rangeEnd == system->MaxRoots());
     }
-    assert(rangeEnd == system->MaxRoots());
-#endif
 
     // Send solutions count.
     if(_rank){
-        unsigned numSolutions = Enumerator<Node, Item>::solutions_found_;
-        MPI_Send(&numSolutions, 1, MPI_UNSIGNED, 0, TAG_STATS, MPI_COMM_WORLD);
+      unsigned numSolutions = Enumerator<Node, Item>::solutions_found_;
+      MPI_Send(&numSolutions, 1, MPI_UNSIGNED, 0, TAG_STATS, MPI_COMM_WORLD);
     }else{
-        for(int i = 1; i < _worldSize; i++){
-            unsigned numSolutions = 0;
-            MPI_Recv(&numSolutions, 1, MPI_UNSIGNED, i, TAG_STATS, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            Enumerator<Node, Item>::solutions_found_ += numSolutions;
-        }
+      for(int i = 1; i < _worldSize; i++){
+        unsigned numSolutions = 0;
+        MPI_Recv(&numSolutions, 1, MPI_UNSIGNED, i, TAG_STATS, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        Enumerator<Node, Item>::solutions_found_ += numSolutions;
+      }
     }
 
     system->CleanUp();

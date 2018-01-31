@@ -20,11 +20,11 @@ class Sequential : public Enumerator<Node, Item> {
     size_t max_roots = system->MaxRoots();
     for (size_t i = 0; i < max_roots; i++) {
       system->GetRoot(i, solution_cb);
-    }
-    while (!nodes.empty()) {
-      Node node = std::move(nodes.top());
-      nodes.pop();
-      system->ListChildren(node, solution_cb);
+      while (!nodes.empty()) {
+        Node node = std::move(nodes.top());
+        nodes.pop();
+        system->ListChildren(node, solution_cb);
+      }
     }
     system->CleanUp();
   }

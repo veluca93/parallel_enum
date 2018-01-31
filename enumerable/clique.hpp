@@ -14,6 +14,8 @@ using Clique = std::vector<node_t>;
 template <typename node_t>
 using CliqueEnumerationNode = std::pair<Clique<node_t>, node_t>;
 
+#define DEGENERACY
+
 template <typename Graph>
 class CliqueEnumeration
     : public Enumerable<CliqueEnumerationNode<typename Graph::node_t>,
@@ -23,7 +25,13 @@ class CliqueEnumeration
   using NodeCallback = typename Enumerable<CliqueEnumerationNode<node_t>,
                                            Clique<node_t>>::NodeCallback;
   explicit CliqueEnumeration(Graph* graph)
-      : graph_(graph->Permute(DegeneracyOrder(*graph))) {}
+      :graph_(
+#ifndef DEGENERACY
+    graph->Clone()
+#else
+    graph->Permute(DegeneracyOrder(*graph))
+#endif
+                ){}
 
   void SetUp() override {
     candidates_bitset_.resize(graph_->size());
