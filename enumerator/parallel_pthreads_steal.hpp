@@ -144,10 +144,10 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
         }
         if (_newRangeCb) {
           if (id == 0) {
-            pthread_barrier_wait(&barrier);
             DEBUG("Invoking callback.");
             std::pair<size_t, size_t> range = (*_newRangeCb)();
             DEBUG("Callback invoked.");
+            pthread_barrier_wait(&barrier);
             nextRoot = range.first;
             _maxRootId = range.second;
             waiting = 0;

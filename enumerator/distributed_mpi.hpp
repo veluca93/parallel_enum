@@ -1,10 +1,12 @@
 #ifndef ENUMERATOR_DISTRIBUTED_MPI_H
 #define ENUMERATOR_DISTRIBUTED_MPI_H
 
+#include <chrono>
 #include <vector>
 #include "third_party/mpi/mpi.h"
 #include "enumerator/parallel_pthreads_steal.hpp"
 
+using namespace std::chrono;
 #undef DEBUG
 #ifdef DEBUG_DISTRIBUTED_MPI
 #define DEBUG(x) do { int rank; MPI_Comm_rank(MPI_COMM_WORLD, &rank); std::cerr << "[DistributedMPI][Rank " << rank << "]" << x << std::endl; } while (0)
@@ -20,9 +22,11 @@ typedef enum{
 static std::pair<size_t, size_t> GetNewRange(){
     MPI_Status status;
     int dummy;
-    MPI_Send(&dummy, 1, MPI_INT, 0, TAG_RANGE_REQUEST, MPI_COMM_WORLD);
     unsigned range[2];
-    MPI_Recv(range, 2, MPI_UNSIGNED, 0, TAG_RANGE_REQUEST, MPI_COMM_WORLD, &status);
+    //MPI_Send(&dummy, 1, MPI_INT, 0, TAG_RANGE_REQUEST, MPI_COMM_WORLD);
+    //MPI_Recv(range, 2, MPI_UNSIGNED, 0, TAG_RANGE_REQUEST, MPI_COMM_WORLD, &status);
+    MPI_Sendrecv(&dummy, 1, MPI_INT, 0, TAG_RANGE_REQUEST, 
+                 range, 2, MPI_UNSIGNED, 0, TAG_RANGE_REQUEST, MPI_COMM_WORLD, &status);
     std::pair<size_t, size_t> roots;
     roots.first = range[0];
     roots.second = range[1];
@@ -56,6 +60,7 @@ public:
     }
 protected:
   void RunInternal(Enumerable<Node, Item>* system) override {
+    std::chrono::high_resolution_clock::time_point startms = std::chrono::high_resolution_clock::now();
     // Divide potential roots by nodes
     system->SetUp();
     MPI_Init(NULL, NULL);
@@ -82,16 +87,38 @@ protected:
       if(_rank == 0){
         // Spawn thread
         t = new std::thread([&](){
-          rootsPerNode = maxRoots / (_chunksPerNode * numWorkers);
+          if(maxRoots < (size_t) (_chunksPerNode * numWorkers)){
+            std::cerr << "WARNING: too high chunks_per_node. Set to maximum allowed for this graph (" << maxRoots / numWorkers << ")" << std::endl;
+            rootsPerNode = maxRoots / numWorkers;
+          }else{
+            rootsPerNode = maxRoots / (_chunksPerNode * numWorkers); 
+          }
+#define LB_HEURISTIC
+#ifdef LB_HEURISTIC
+          nextRangeStart = maxRoots;
+          while(nextRangeStart > 0){
+            if(nextRangeStart >= rootsPerNode){
+	      nextRangeStart -= rootsPerNode;
+	      rangeEnd = nextRangeStart + rootsPerNode;
+	    }else{
+	      rangeEnd = nextRangeStart;
+	      nextRangeStart = 0;
+	    }
+            int requester = WaitRangeRequest(nextRangeStart, rangeEnd);
+            lastRequest[requester] = std::chrono::high_resolution_clock::now();
+          }
+#else
           while(nextRangeStart < maxRoots){
             rangeEnd = nextRangeStart + rootsPerNode;
             if(rangeEnd > maxRoots){
               rangeEnd = maxRoots;
             }
-            WaitRangeRequest(nextRangeStart, rangeEnd);
+            int requester = WaitRangeRequest(nextRangeStart, rangeEnd);
+            lastRequest[requester] = std::chrono::high_resolution_clock::now();
             nextRangeStart = rangeEnd;
           }
-          assert(nextRangeStart == maxRoots);            
+          assert(nextRangeStart == maxRoots);
+#endif           
           size_t terminationsToSend = numWorkers;
           while(terminationsToSend){
             // If start >= maxRoots it means that there are no more roots.
@@ -139,6 +166,7 @@ protected:
       }
       assert(rangeEnd == system->MaxRoots());
     }
+    std::cout << "Rank " << _rank << " executed in " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - startms).count() << " milliseconds." << std::endl;
 
     // Send solutions count.
     if(_rank){

@@ -2,7 +2,7 @@
 #include "enumerable/ckplex.hpp"
 #include "enumerable/clique.hpp"
 #include "enumerable/diam2kplex.hpp"
-#include "enumerator/parallel_tbb.hpp"
+//#include "enumerator/parallel_tbb.hpp"
 #include "enumerator/sequential.hpp"
 //#include "enumerator/parallel_pthreads.hpp"
 #include "enumerator/parallel_pthreads_steal.hpp"
