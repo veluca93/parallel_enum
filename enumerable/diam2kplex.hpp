@@ -420,6 +420,7 @@ class Diam2KplexEnumeration
 
   void GetRoot(size_t v, const NodeCallback& cb) override {
     // TODO: euristica vicini indietro
+    if (graph_->fwd_degree(v) + k_ < q_) return;
     thread_local Diam2KplexNode<Graph> node;
     node.Clear();
     thread_local std::vector<bool> subgraph_added(graph_->size());
