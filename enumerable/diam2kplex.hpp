@@ -8,6 +8,7 @@
 #include "permute/permute.hpp"
 #include "util/bitset.hpp"
 #include "util/graph.hpp"
+#include "util/serialize.hpp"
 
 #ifdef DEGENERACY
 #undef DEGENERACY
@@ -93,6 +94,20 @@ struct Diam2KplexNodeImpl<Graph, 0> {
   std::vector<size_t> non_neighs;
   std::vector<size_t> cands;
   std::vector<size_t> excluded;
+  void Serialize(std::vector<size_t>* out) const {
+    ::Serialize(kplex, out);
+    ::Serialize(counters, out);
+    ::Serialize(non_neighs, out);
+    ::Serialize(cands, out);
+    ::Serialize(excluded, out);
+  }
+  void Deserialize(const size_t** in) {
+    ::Deserialize(in, &kplex);
+    ::Deserialize(in, &counters);
+    ::Deserialize(in, &non_neighs);
+    ::Deserialize(in, &cands);
+    ::Deserialize(in, &excluded);
+  }
   void Init(const Graph* graph, const std::vector<node_t>& subgraph, size_t k) {
     kplex.clear();
     cands.clear();
@@ -367,11 +382,43 @@ class Diam2KplexNode {
     }
   }
 
+  void Serialize(std::vector<size_t>* out) const {
+    ::Serialize(subgraph_, out);
+    ::Serialize(impl0_, out);
+    ::Serialize(current_impl_, out);
+  }
+  void Deserialize(const size_t** in) {
+    ::Deserialize(in, &subgraph_);
+    ::Deserialize(in, &impl0_);
+    ::Deserialize(in, &current_impl_);
+  }
+
  private:
   std::shared_ptr<std::vector<node_t>> subgraph_;
   Diam2KplexNodeImpl<Graph, 0> impl0_;
   size_t current_impl_ = 0;
 };
+
+template <typename Graph>
+void Serialize(const Diam2KplexNodeImpl<Graph, 0>& in,
+               std::vector<size_t>* out) {
+  in.Serialize(out);
+}
+
+template <typename Graph>
+void Deserialize(const size_t** in, const Diam2KplexNodeImpl<Graph, 0>* out) {
+  out->Deserialize(in);
+}
+
+template <typename Graph>
+void Serialize(const Diam2KplexNode<Graph>& in, std::vector<size_t>* out) {
+  in.Serialize(out);
+}
+
+template <typename Graph>
+void Deserialize(const size_t** in, const Diam2KplexNode<Graph>* out) {
+  out->Deserialize(in);
+}
 
 template <typename Graph>
 class Diam2KplexEnumeration

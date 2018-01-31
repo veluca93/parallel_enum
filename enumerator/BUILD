@@ -16,14 +16,21 @@ cc_library(
 )
 
 cc_library(
-	name = "parallel",
-	hdrs = ["parallel_pthreads.hpp", "parallel_pthreads_steal.hpp"],
-	deps = [":enumerator"],
+    name = "parallel",
+    hdrs = [
+        "parallel_pthreads.hpp",
+        "parallel_pthreads_steal.hpp",
+        "parallel_tbb.hpp",
+    ],
+    deps = [":enumerator"],
 )
 
 cc_library(
     name = "distributed",
     hdrs = ["distributed_mpi.hpp"],
-    deps = [":enumerator", ":parallel",
-            "//third_party/mpi"],
+    deps = [
+        ":enumerator",
+        ":parallel",
+        "//third_party/mpi",
+    ],
 )

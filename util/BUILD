@@ -32,6 +32,12 @@ cc_library(
 )
 
 cc_library(
+    name = "serialize",
+    hdrs = ["serialize.hpp"],
+    deps = ["@com_google_absl//absl/memory"],
+)
+
+cc_library(
     name = "bitset",
     hdrs = ["bitset.hpp"],
 )

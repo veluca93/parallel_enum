@@ -24,6 +24,7 @@ cc_library(
         ":enumerable",
         "//permute",
         "//util:bitset",
+        "//util:serialize",
         "@com_google_absl//absl/strings",
     ],
 )
