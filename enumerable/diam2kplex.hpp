@@ -279,11 +279,32 @@ struct Diam2KplexNodeImpl<Graph, 0> {
     }
   }
 
+  bool HasDiameterTwo(const Graph* graph, const std::vector<node_t>& subgraph,
+                      size_t k) const {
+    if (kplex.size() + 2 > 2 * k) return true;
+    if (k == 2) return true;
+    for (size_t v : kplex) {
+      for (size_t u : kplex) {
+        if (graph->are_neighs(subgraph[u], subgraph[v])) continue;
+        bool have_common_neigh = false;
+        for (size_t x : kplex) {
+          if (graph->are_neighs(subgraph[u], subgraph[x]) &&
+              graph->are_neighs(subgraph[v], subgraph[x])) {
+            have_common_neigh = true;
+            break;
+          }
+        }
+        if (!have_common_neigh) return false;
+      }
+    }
+    return true;
+  }
+
   bool IsReallyMaximal(const Graph* graph, const std::vector<node_t>& subgraph,
                        size_t k, size_t q) const {
     if (!IsMaximal()) return false;
     if (kplex.size() < q) return false;
-    // TODO: diameter
+    if (!HasDiameterTwo(graph, subgraph, k)) return false;
     // Check neighs of the first k nodes that are smaller than v.
     for (size_t i = 0; i < k && i < kplex.size(); i++) {
       for (node_t n : graph->neighs(subgraph[kplex[i]])) {
