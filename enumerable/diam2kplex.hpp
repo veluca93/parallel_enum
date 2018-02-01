@@ -172,7 +172,8 @@ struct Diam2KplexNodeImpl<Graph, 0> {
       }
     }
     if (!universals->empty()) return;
-    if (enable_pivoting) {
+    real_cands->clear();
+    if (enable_pivoting && kplex.size() + 1 > k) {
       size_t best = cands[0];
       size_t best_not_cuts = cands.size();
       auto not_cuts = [&](size_t u, const std::function<void(size_t)>& cb) {
@@ -209,10 +210,13 @@ struct Diam2KplexNodeImpl<Graph, 0> {
           best_not_cuts = count;
         }
       }
-      real_cands->clear();
       not_cuts(best, [real_cands](size_t v) { real_cands->push_back(v); });
     } else {
-      *real_cands = cands;
+      for (size_t u : cands) {
+        if (counters[u] != kplex.size()) {
+          real_cands->push_back(u);
+        }
+      }
     }
     std::sort(real_cands->begin(), real_cands->end(), [&](size_t a, size_t b) {
       return counters[a] + cand_counters[a] > counters[b] + cand_counters[b];
@@ -280,12 +284,6 @@ struct Diam2KplexNodeImpl<Graph, 0> {
     if (!IsMaximal()) return false;
     if (kplex.size() < q) return false;
     // TODO: diameter
-    if (k > 2) throw std::runtime_error("ciao ciao");
-    if (k == 2 && kplex.size() == 2) {
-      if (!graph->are_neighs(subgraph[kplex[0]], subgraph[kplex[1]])) {
-        return false;
-      }
-    }
     // Check neighs of the first k nodes that are smaller than v.
     for (size_t i = 0; i < k && i < kplex.size(); i++) {
       for (node_t n : graph->neighs(subgraph[kplex[i]])) {
