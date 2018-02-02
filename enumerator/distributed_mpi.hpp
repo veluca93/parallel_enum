@@ -2,6 +2,8 @@
 #define ENUMERATOR_DISTRIBUTED_MPI_H
 
 #include <chrono>
+#include <limits.h>
+#include <stdint.h>
 #include <vector>
 #include "third_party/mpi/mpi.h"
 #include "enumerator/parallel_pthreads_steal.hpp"
@@ -9,17 +11,210 @@
 using namespace std::chrono;
 #undef DEBUG
 #ifdef DEBUG_DISTRIBUTED_MPI
-#define DEBUG(x) do { int rank; MPI_Comm_rank(MPI_COMM_WORLD, &rank); std::cerr << "[DistributedMPI][Rank " << rank << "]" << x << std::endl; } while (0)
+#define DEBUG(x) do { int rank; MPI_Comm_rank(MPI_COMM_WORLD, &rank); std::cerr << "[DistributedMPI][" << (rank==0?"Master":("Worker " + std::to_string(rank - 1))) << "] " << x << std::endl; } while (0)
 #else
 #define DEBUG(x)
 #endif
 
 typedef enum{
-    TAG_STATS = 0, // Termination stats
-    TAG_RANGE_REQUEST = 1, // Range requests (if chunksPerNode != 1)
+  TAG_STATS = 0,     // Termination stats
+  TAG_RANGE_REQUEST, // Range requests (if chunksPerNode != 1)
+  TAG_SUBTREE        // Subtree communications (tasks steal)
 }DistributedEnumTags;
 
-static std::pair<size_t, size_t> GetNewRange(){
+typedef enum{
+  WORKER_STATE_ROOTS = 0, // Normal execution, searching for roots
+  WORKER_STATE_SUBTREES,  // Roots terminated, stealing subtrees
+  WORKER_STATE_TERMINATED // Subtrees terminated, termination message sent
+}WorkerState;
+
+#if SIZE_MAX == UCHAR_MAX
+   #define my_MPI_SIZE_T MPI_UNSIGNED_CHAR
+#elif SIZE_MAX == USHRT_MAX
+   #define my_MPI_SIZE_T MPI_UNSIGNED_SHORT
+#elif SIZE_MAX == UINT_MAX
+   #define my_MPI_SIZE_T MPI_UNSIGNED
+#elif SIZE_MAX == ULONG_MAX
+   #define my_MPI_SIZE_T MPI_UNSIGNED_LONG
+#elif SIZE_MAX == ULLONG_MAX
+   #define my_MPI_SIZE_T MPI_UNSIGNED_LONG_LONG
+#else
+   #error "what is happening here?"
+#endif
+
+static size_t RankToWorkerId(int rank){
+  return rank - 1;
+}
+
+static int WorkerIdToRank(size_t workerId){
+  return workerId + 1;
+}
+
+template <typename Node, typename Item>
+class Master {
+  Enumerable<Node, Item>* _system;
+  size_t _numWorkers;
+  int _chunksPerNode;
+  std::vector<WorkerState> _workersStates;
+  std::vector<std::chrono::high_resolution_clock::time_point> _lastRequest;
+public:
+  Master(Enumerable<Node, Item>* system, size_t numWorkers, int chunksPerNode):
+    _system(system), _numWorkers(numWorkers), _chunksPerNode(chunksPerNode){;}
+
+  // Returns the worker id of the victim
+  size_t GetStealVictim(){
+    std::chrono::high_resolution_clock::time_point minimum = std::chrono::time_point<std::chrono::system_clock>::max();
+    size_t toReturn = 0;
+    for(size_t i = 0; i < _lastRequest.size(); i++){
+      if(_workersStates[i] != WORKER_STATE_TERMINATED && _lastRequest[i] < minimum){
+        minimum = _lastRequest[i];
+        toReturn = i;
+      }
+    }
+    return toReturn;
+  }
+
+  bool terminated(size_t exclude){
+    for(size_t i = 0; i < _numWorkers; i++){
+      if(i != exclude && _workersStates[i] != WORKER_STATE_TERMINATED){
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // Returns true if everyone terminated.
+  bool WaitRangeRequest(size_t begin, size_t end){
+    MPI_Status status;
+    int dummy;
+    MPI_Recv(&dummy, 1, MPI_INT, MPI_ANY_SOURCE, TAG_RANGE_REQUEST, MPI_COMM_WORLD, &status);
+    size_t stealerRank = status.MPI_SOURCE;
+    int stealerId = RankToWorkerId(status.MPI_SOURCE);
+    _lastRequest[stealerId] = std::chrono::high_resolution_clock::now();
+    
+    if(begin != _system->MaxRoots()){
+      // Send a root
+      unsigned range[2];
+      range[0] = begin;
+      range[1] = end;
+      MPI_Send(range, 2, MPI_UNSIGNED, status.MPI_SOURCE, TAG_RANGE_REQUEST, MPI_COMM_WORLD);
+    }else{
+      // If we begin == _system->MaxRoots() roots are finished and we will send a subtree.
+      _workersStates[stealerId] = WORKER_STATE_SUBTREES;
+      bool somethingSent = false;
+
+      while(!somethingSent && !terminated(stealerId)){
+        // Take something from the victim
+        int victimId = GetStealVictim();
+        int victimRank = WorkerIdToRank(victimId);
+        assert(victimId != stealerId);
+        unsigned subtreeLength;
+        DEBUG(stealerId << " needs something and we try to steal from " << victimId);
+        MPI_Sendrecv(&dummy, 1, MPI_INT, victimRank, TAG_SUBTREE, 
+                     &subtreeLength, 1, MPI_UNSIGNED, victimRank, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+                                       //TODO: We may rceive an MPI_INT if it is a range request.
+        // subtreeLenght is always > 0
+        if(status.MPI_TAG == TAG_SUBTREE){
+          // If subtree present, receive it.
+          size_t* subtree = (size_t*) malloc(sizeof(size_t) * subtreeLength);
+          MPI_Recv(subtree, subtreeLength, my_MPI_SIZE_T, victimRank, TAG_SUBTREE, MPI_COMM_WORLD, &status);
+          unsigned range[2];
+          range[0] =  _system->MaxRoots();
+          range[1] = subtreeLength; // End in this case represents the length of the subtree serialized data structure.
+
+          DEBUG("Worker " << victimId << " provided a subtree serialized with an array of length " << subtreeLength);
+          // Send the notification that there are no roots together with the subtree length to the worker which requested the range
+          MPI_Send(range, 2, MPI_UNSIGNED, stealerRank, TAG_RANGE_REQUEST, MPI_COMM_WORLD);
+          // Send the subtree to the worker which requested the range
+          MPI_Send(subtree, subtreeLength, my_MPI_SIZE_T, stealerRank, TAG_SUBTREE, MPI_COMM_WORLD); 
+          free(subtree);
+          somethingSent = true;
+          DEBUG("Subtree sent");
+        }else{
+          // The victim wants something, it is terminated.
+          DEBUG("The victim needs some data itself, we terminate it (" << victimId << ")");
+          unsigned range[2];
+          range[0] = _system->MaxRoots();
+          range[1] = 0;
+          MPI_Send(range, 2, MPI_UNSIGNED, victimRank, TAG_RANGE_REQUEST, MPI_COMM_WORLD);
+          _workersStates[victimId] = WORKER_STATE_TERMINATED;
+          _lastRequest[victimId] = std::chrono::high_resolution_clock::now();
+          DEBUG("Termination sent to the victim");
+        }
+      }
+
+      if(!somethingSent){
+          DEBUG("No victims available, we terminate the stealer (" << stealerId << ")");
+          unsigned range[2];
+          range[0] = _system->MaxRoots();
+          range[1] = 0; // Subtree length = 0 to notify termination.
+          MPI_Send(range, 2, MPI_UNSIGNED, stealerRank, TAG_RANGE_REQUEST, MPI_COMM_WORLD);
+      }
+
+      if(terminated(stealerId)){
+        _workersStates[stealerId] = WORKER_STATE_TERMINATED;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void Run(){
+    size_t maxRoots = _system->MaxRoots();
+    size_t rootsPerNode, nextRangeStart = 0, rangeEnd;
+    _lastRequest.resize(_numWorkers);
+    for(size_t i = 0; i < _numWorkers; i++){
+      _workersStates.push_back(WORKER_STATE_ROOTS);
+    }
+    if(maxRoots < (size_t) (_chunksPerNode * _numWorkers)){
+      std::cerr << "WARNING: too high chunks_per_node. Set to maximum allowed for this graph (" << maxRoots / _numWorkers << ")" << std::endl;
+      rootsPerNode = maxRoots / _numWorkers;
+    }else{
+      rootsPerNode = maxRoots / (_chunksPerNode * _numWorkers); 
+    }
+#define LB_HEURISTIC
+#ifdef LB_HEURISTIC
+    nextRangeStart = maxRoots;
+    while(nextRangeStart > 0){
+      if(nextRangeStart >= rootsPerNode){
+        nextRangeStart -= rootsPerNode;
+        rangeEnd = nextRangeStart + rootsPerNode;
+      }else{
+        rangeEnd = nextRangeStart;
+        nextRangeStart = 0;
+      }
+      DEBUG("Sending range starting at " << nextRangeStart);
+      WaitRangeRequest(nextRangeStart, rangeEnd);
+    }
+#else
+    while(nextRangeStart < maxRoots){
+      rangeEnd = nextRangeStart + rootsPerNode;
+      if(rangeEnd > maxRoots){
+        rangeEnd = maxRoots;
+      }
+      DEBUG("Sending range starting at " << nextRangeStart);
+      WaitRangeRequest(nextRangeStart, rangeEnd);
+      nextRangeStart = rangeEnd;
+    }
+    assert(nextRangeStart == maxRoots);
+#endif
+    // Wait for termination while performing stealing.
+    while(!WaitRangeRequest(maxRoots, 0)){
+      ;
+    }
+  }
+};
+
+template <typename Node, typename Item>
+class Worker {
+  Enumerable<Node, Item>* _system;
+  int _nthreads;
+  int _rank;
+public:
+  Worker(Enumerable<Node, Item>* system, int nthreads, int rank):_system(system), _nthreads(nthreads), _rank(rank){;}
+
+  MoreWorkData GetMoreWork(){
+    MoreWorkData mwd;
     MPI_Status status;
     int dummy;
     unsigned range[2];
@@ -27,37 +222,77 @@ static std::pair<size_t, size_t> GetNewRange(){
     //MPI_Recv(range, 2, MPI_UNSIGNED, 0, TAG_RANGE_REQUEST, MPI_COMM_WORLD, &status);
     MPI_Sendrecv(&dummy, 1, MPI_INT, 0, TAG_RANGE_REQUEST, 
                  range, 2, MPI_UNSIGNED, 0, TAG_RANGE_REQUEST, MPI_COMM_WORLD, &status);
-    std::pair<size_t, size_t> roots;
-    roots.first = range[0];
-    roots.second = range[1];
-    DEBUG("Range [" << roots.first << ", " << roots.second << "] received. Error: " << status.MPI_ERROR);
-    return roots;
-}
+    if(range[0] == _system->MaxRoots()){
+      // range[1] is the length of the subtree I'm going to receive.
+      // Now I'll receive a subtree since roots are finished.
+      size_t subtreeLength = range[1];
+      if(subtreeLength){
+        size_t* subtree = (size_t*) malloc(sizeof(size_t) * subtreeLength);
+        MPI_Recv(subtree, subtreeLength, my_MPI_SIZE_T, 0, TAG_SUBTREE, MPI_COMM_WORLD, &status);
+        mwd.info = MORE_WORK_SUBTREE;
+        mwd.subtree = subtree;
+        mwd.subtreeLength = subtreeLength;
+      }else{
+        DEBUG("Received termination message.");
+        mwd.info = MORE_WORK_NOTHING;
+      }
+    }else{
+      mwd.info = MORE_WORK_RANGE;
+      mwd.range.first = range[0];
+      mwd.range.second = range[1];
+    }
+    return mwd;
+  }
 
-
-static void WaitRangeRequest(size_t begin, size_t end){
+  /**
+   * Checks if a steal request was present. If so, passes
+   * the node nodeId to the stealer.
+   * @param nodeId The node which could be stolen.
+   * @return true if the node was stolen, false otherwise.
+   **/
+  bool CheckStealRequest(){  
     MPI_Status status;
-    int dummy;
-    MPI_Recv(&dummy, 1, MPI_INT, MPI_ANY_SOURCE, TAG_RANGE_REQUEST, MPI_COMM_WORLD, &status);
-    unsigned range[2];
-    range[0] = begin;
-    range[1] = end;
-    DEBUG("Received range request from " << status.MPI_SOURCE << " error: " << status.MPI_ERROR);
-    DEBUG("Sending range [" << begin << ", " << end << "] to " << status.MPI_SOURCE);
-    MPI_Send(range, 2, MPI_UNSIGNED, status.MPI_SOURCE, TAG_RANGE_REQUEST, MPI_COMM_WORLD);
-}
+    int flag;
+    MPI_Iprobe(0, TAG_SUBTREE, MPI_COMM_WORLD, &flag, &status);
+    if(flag){
+      return true;
+    }else{
+      return false;
+    }
+  }
+
+  ssize_t Run(){
+    // Request the first batch of roots.
+    MoreWorkData mwd = GetMoreWork();
+    assert(mwd.info == MORE_WORK_RANGE);
+    auto tmp = absl::make_unique<ParallelPthreadsSteal<Node, Item>>(_nthreads, mwd.range.first, mwd.range.second);
+    MoreWork mr = std::bind(&Worker::GetMoreWork, this);
+    CheckSteal cs = std::bind(&Worker::CheckStealRequest, this);
+    SendSteal ss = [&](std::vector<size_t>& serializedData){
+      int dummy;
+      MPI_Status status;
+      MPI_Recv(&dummy, 1, MPI_INT, 0, TAG_SUBTREE, MPI_COMM_WORLD, &status);
+      unsigned subtreeLength = serializedData.size();
+      MPI_Send(&subtreeLength, 1, MPI_UNSIGNED, 0, TAG_SUBTREE, MPI_COMM_WORLD);
+      MPI_Send(serializedData.data(), subtreeLength, my_MPI_SIZE_T, 0, TAG_SUBTREE, MPI_COMM_WORLD);
+    };
+    tmp->SetCallbacks(&mr, &cs, &ss);
+    tmp->Run(_system);
+    return tmp->GetSolutionsFound();
+  }
+};
 
 template <typename Node, typename Item>
 class DistributedMPI : public Enumerator<Node, Item> {
 private:
-    int _nthreads;
-    int _rank;
-    int _worldSize;
-    int _chunksPerNode;
+  int _nthreads;
+  int _rank;
+  int _worldSize;
+  int _chunksPerNode;
 public:
-    DistributedMPI(int nthreads, uint chunksPerNode): _nthreads(nthreads), _rank(0), _worldSize(0), _chunksPerNode(chunksPerNode){
-        ;
-    }
+  DistributedMPI(int nthreads, uint chunksPerNode): _nthreads(nthreads), _rank(0), _worldSize(0), _chunksPerNode(chunksPerNode){
+    ;
+  }
 protected:
   void RunInternal(Enumerable<Node, Item>* system) override {
     std::chrono::high_resolution_clock::time_point startms = std::chrono::high_resolution_clock::now();
@@ -74,79 +309,33 @@ protected:
     }
     if(_rank == 0){
         std::cout << "Distributed enumerator (MPI): running with " <<
-                     _worldSize << " nodes and " << _nthreads << " threads for " <<
+                     _worldSize - 1 << " workers and " << _nthreads << " threads for " <<
                     " each node." << std::endl;
     }
 
-    size_t maxRoots, rootsPerNode, nextRangeStart = 0, rangeEnd;
     int numWorkers;
-    maxRoots = system->MaxRoots();
     if(_chunksPerNode > 1){
-      std::thread* t = NULL;
       numWorkers = _worldSize - 1; // -1 because rank 0 doesn't perform computation
       if(_rank == 0){
-        // Spawn thread
-        t = new std::thread([&](){
-          if(maxRoots < (size_t) (_chunksPerNode * numWorkers)){
-            std::cerr << "WARNING: too high chunks_per_node. Set to maximum allowed for this graph (" << maxRoots / numWorkers << ")" << std::endl;
-            rootsPerNode = maxRoots / numWorkers;
-          }else{
-            rootsPerNode = maxRoots / (_chunksPerNode * numWorkers); 
-          }
-#define LB_HEURISTIC
-#ifdef LB_HEURISTIC
-          nextRangeStart = maxRoots;
-          while(nextRangeStart > 0){
-            if(nextRangeStart >= rootsPerNode){
-	      nextRangeStart -= rootsPerNode;
-	      rangeEnd = nextRangeStart + rootsPerNode;
-	    }else{
-	      rangeEnd = nextRangeStart;
-	      nextRangeStart = 0;
-	    }
-            int requester = WaitRangeRequest(nextRangeStart, rangeEnd);
-            lastRequest[requester] = std::chrono::high_resolution_clock::now();
-          }
-#else
-          while(nextRangeStart < maxRoots){
-            rangeEnd = nextRangeStart + rootsPerNode;
-            if(rangeEnd > maxRoots){
-              rangeEnd = maxRoots;
-            }
-            int requester = WaitRangeRequest(nextRangeStart, rangeEnd);
-            lastRequest[requester] = std::chrono::high_resolution_clock::now();
-            nextRangeStart = rangeEnd;
-          }
-          assert(nextRangeStart == maxRoots);
-#endif           
-          size_t terminationsToSend = numWorkers;
-          while(terminationsToSend){
-            // If start >= maxRoots it means that there are no more roots.
-            WaitRangeRequest(maxRoots, 0);
-            --terminationsToSend;
-          }
-        });
-      }
-
-      if(_rank != 0){
-        // Request the first batch of roots.
-        std::pair<size_t, size_t> range = GetNewRange();
-        DEBUG("Rank " << _rank << " processing between " << range.first << " and " << range.second);
-        auto tmp = absl::make_unique<ParallelPthreadsSteal<Node, Item>>(_nthreads, range.first, range.second);
-        NewRange nr = GetNewRange;
-        tmp->SetMoreRootsCallback(&nr);
-        tmp->Run(system);
-        Enumerator<Node, Item>::solutions_found_ = tmp->GetSolutionsFound();
-        DEBUG("Rank " << _rank << " terminated at " << time(NULL));
-      }
-  
-      if(_rank == 0){
-        t->join();
+        /**********************************/
+        /*            Master              */
+        /**********************************/
+        Master<Node, Item> m(system, numWorkers, _chunksPerNode);
+        m.Run();
+      }else{
+        /**********************************/
+        /*           Workers              */
+        /**********************************/
+        Worker<Node, Item> w(system, _nthreads, _rank);
+        Enumerator<Node, Item>::solutions_found_ = w.Run();
       }
     }else{
+      // _chunksPerNode <= 1
       // TODO We could remove this special case.
+      size_t maxRoots = system->MaxRoots();
+      size_t nextRangeStart = 0, rangeEnd;
       numWorkers = _worldSize;
-      rootsPerNode = maxRoots / numWorkers;
+      size_t rootsPerNode = maxRoots / numWorkers;
       size_t surplus = maxRoots % numWorkers;
       for(int i = 0; i < numWorkers; i++){
         rangeEnd = nextRangeStart + rootsPerNode;
@@ -156,11 +345,9 @@ protected:
         }
         // If I am this one..
         if(i == _rank){
-          DEBUG("Rank " << i << " pid " << getpid() << " processing between " << nextRangeStart << " and " << rangeEnd);
           auto tmp = absl::make_unique<ParallelPthreadsSteal<Node, Item>>(_nthreads, nextRangeStart, rangeEnd);
           tmp->Run(system);
           Enumerator<Node, Item>::solutions_found_ = tmp->GetSolutionsFound();
-          DEBUG("Rank " << i << " pid " << getpid() << " terminated at " << time(NULL));
         }
         nextRangeStart = rangeEnd;
       }

@@ -399,26 +399,6 @@ class Diam2KplexNode {
   size_t current_impl_ = 0;
 };
 
-template <typename Graph>
-void Serialize(const Diam2KplexNodeImpl<Graph, 0>& in,
-               std::vector<size_t>* out) {
-  in.Serialize(out);
-}
-
-template <typename Graph>
-void Deserialize(const size_t** in, const Diam2KplexNodeImpl<Graph, 0>* out) {
-  out->Deserialize(in);
-}
-
-template <typename Graph>
-void Serialize(const Diam2KplexNode<Graph>& in, std::vector<size_t>* out) {
-  in.Serialize(out);
-}
-
-template <typename Graph>
-void Deserialize(const size_t** in, const Diam2KplexNode<Graph>* out) {
-  out->Deserialize(in);
-}
 
 template <typename Graph>
 class Diam2KplexEnumeration

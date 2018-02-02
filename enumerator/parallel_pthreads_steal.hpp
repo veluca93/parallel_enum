@@ -7,6 +7,7 @@
 
 #include "enumerator/enumerator.hpp"
 #include "util/concurrentqueue.hpp"
+#include "util/serialize.hpp"
 
 #undef DEBUG
 #ifdef DEBUG_PARALLEL_PTHREADS
@@ -29,7 +30,22 @@ static void pin(std::thread& t, int i) {
   }
 }
 
-using NewRange = std::function<std::pair<size_t, size_t>()>;
+typedef enum{
+  MORE_WORK_RANGE = 0,
+  MORE_WORK_SUBTREE,
+  MORE_WORK_NOTHING
+}MoreWorkInfo;
+
+typedef struct{
+  MoreWorkInfo info;
+  std::pair<size_t, size_t> range;
+  size_t* subtree;
+  size_t subtreeLength;
+}MoreWorkData;
+
+using MoreWork = std::function<MoreWorkData()>;
+using CheckSteal = std::function<bool()>;
+using SendSteal = std::function<void(std::vector<size_t>&)>;
 
 template <typename Node, typename Item>
 class ParallelPthreadsSteal : public Enumerator<Node, Item> {
@@ -37,8 +53,9 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
   int _nthreads;
   size_t _minRootId;
   size_t _maxRootId;
-  NewRange* _newRangeCb;
-
+  MoreWork* _moreWorkCb;
+  CheckSteal* _checkStealCb;
+  SendSteal* _sendStealCb;
  public:
   /**
    * Roots will be explored in the range [minRootId, maxRootId[
@@ -52,12 +69,18 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
       : _nthreads(nthreads),
         _minRootId(minRootId),
         _maxRootId(maxRootId),
-        _newRangeCb(NULL) {
+        _moreWorkCb(NULL),
+        _checkStealCb(NULL),
+        _sendStealCb(NULL) {
     std::cout << "Parallel enumerator (Pthreads): running with " << _nthreads
               << " threads." << std::endl;
   }
 
-  void SetMoreRootsCallback(NewRange* moreRoots) { _newRangeCb = moreRoots; }
+  void SetCallbacks(MoreWork* moreWork, CheckSteal* checkSteal, SendSteal* sendSteal) { 
+    _moreWorkCb = moreWork; 
+    _checkStealCb = checkSteal;
+    _sendStealCb = sendSteal;
+  }
 
  protected:
   void RunInternal(Enumerable<Node, Item>* system) override {
@@ -81,9 +104,13 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
       char padding[64] = {};
       (void)padding;
 
-      auto solution_cb = [this, &lnodes, &gnodes, &waiting, &stolen, &qSize,
+      auto solution_cb = [this, &lnodes, &gnodes, &waiting, &stolen, &qSize, &id,
                           system](const Node& node) {
-        if (qSize < waiting) {
+        if (id == 0 && _checkStealCb && (*_checkStealCb)()) {
+          std::vector<size_t> serializedNode;
+          Serialize(node, &serializedNode);
+          (*_sendStealCb)(serializedNode);
+        } else if (qSize < waiting) {
           ++qSize;
           gnodes.enqueue(node);
 #ifdef PRINT_STOLEN
@@ -96,8 +123,8 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
         return true;
       };
 
+      rootsAvailable = true;
       while (!terminate) {
-        rootsAvailable = true;
         while (true) {
           Node node;
           bool nodeSet = false;
@@ -142,24 +169,33 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
                     // nodes (distributed)
           }
         }
-        if (_newRangeCb) {
+
+        // Try to get more work.
+        if (_moreWorkCb) {
           if (id == 0) {
             DEBUG("Invoking callback.");
-            std::pair<size_t, size_t> range = (*_newRangeCb)();
-            DEBUG("Callback invoked.");
+            MoreWorkData mwd = (*_moreWorkCb)();
             pthread_barrier_wait(&barrier);
-            nextRoot = range.first;
-            _maxRootId = range.second;
-            waiting = 0;
-            qSize = 0;
-            if (nextRoot >= system->MaxRoots()) {
-              DEBUG("Terminating....");
+            if(mwd.info == MORE_WORK_RANGE){
+              DEBUG("Callback invoked.");
+              nextRoot = mwd.range.first;
+              _maxRootId = mwd.range.second;
+              waiting = 0;
+              qSize = 0;
+              DEBUG("Waiting on barrier.");
+              rootsAvailable = true;
+            }else if(mwd.info == MORE_WORK_SUBTREE){
+              Node deserializedNode;
+              const size_t* subtree = mwd.subtree;
+              Deserialize(&subtree, &deserializedNode);
+              gnodes.enqueue(deserializedNode);
+              free(mwd.subtree);
+              rootsAvailable = false;
+            }else{
               terminate = true;
             }
-            DEBUG("Waiting on barrier.");
             pthread_barrier_wait(&barrier);
             DEBUG("Exiting barrier.");
-            // Cleanup
           } else {
             // Two barriers are needed: the first one to be sure
             // everyone is out of the first loop, the second one to be
@@ -167,6 +203,9 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
             pthread_barrier_wait(&barrier);
             // Wait for zero to do its stuff
             pthread_barrier_wait(&barrier);
+            if (nextRoot < _maxRootId){
+              rootsAvailable = true;
+            }
           }
         } else {
           terminate = true;
