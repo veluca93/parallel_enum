@@ -6,6 +6,19 @@
 
 #include "absl/memory/memory.h"
 
+
+template <typename T>
+void Serialize(const std::vector<T>& in, std::vector<size_t>* out);
+
+template <typename T>
+void Serialize(const std::shared_ptr<T>& in, std::vector<size_t>* out);
+
+template <typename T>
+void Serialize(const std::unique_ptr<T>& in, std::vector<size_t>* out);
+
+template<typename T, typename U>
+void Serialize(const std::pair<T, U>& in, std::vector<size_t>* out);
+
 template <typename T>
 typename std::enable_if<std::is_integral<T>::value>::type Serialize(
     const T& in, std::vector<size_t>* out) {
@@ -45,6 +58,18 @@ void Serialize(const std::pair<T, U>& in, std::vector<size_t>* out) {
   Serialize(in.first, out);
   Serialize(in.second, out);
 }
+
+template <typename T>
+void Deserialize(const size_t** in, std::vector<T>* out);
+
+template <typename T>
+void Deserialize(const size_t** in, std::shared_ptr<T>* out);
+
+template <typename T>
+void Deserialize(const size_t** in, std::unique_ptr<T>* out);
+
+template<typename T, typename U>
+void Deserialize(const size_t** in,  std::pair<T, U>* out);
 
 template <typename T>
 typename std::enable_if<std::is_integral<T>::value>::type Deserialize(

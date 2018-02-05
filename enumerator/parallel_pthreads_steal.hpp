@@ -106,11 +106,7 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
 
       auto solution_cb = [this, &lnodes, &gnodes, &waiting, &stolen, &qSize, &id,
                           system](const Node& node) {
-        if (id == 0 && _checkStealCb && (*_checkStealCb)()) {
-          std::vector<size_t> serializedNode;
-          Serialize(node, &serializedNode);
-          (*_sendStealCb)(serializedNode);
-        } else if (qSize < waiting) {
+        if (qSize < waiting) {
           ++qSize;
           gnodes.enqueue(node);
 #ifdef PRINT_STOLEN
@@ -164,6 +160,12 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
 
           if (nodeSet) {
             system->ListChildren(node, solution_cb);
+            if (id == 0 && _checkStealCb && (*_checkStealCb)()) {
+              std::vector<size_t> serializedNode;
+              Serialize(lnodes, &serializedNode);
+              (*_sendStealCb)(serializedNode);
+              lnodes.clear();
+            } 
           } else if (nextRoot >= _maxRootId) {
             break;  // No more local roots, try to grab from other computing
                     // nodes (distributed)
@@ -176,19 +178,22 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
             DEBUG("Invoking callback.");
             MoreWorkData mwd = (*_moreWorkCb)();
             pthread_barrier_wait(&barrier);
+            waiting = 0;
+            qSize = 0
             if(mwd.info == MORE_WORK_RANGE){
               DEBUG("Callback invoked.");
               nextRoot = mwd.range.first;
-              _maxRootId = mwd.range.second;
-              waiting = 0;
-              qSize = 0;
+              _maxRootId = mwd.range.second;;
               DEBUG("Waiting on barrier.");
               rootsAvailable = true;
             }else if(mwd.info == MORE_WORK_SUBTREE){
-              Node deserializedNode;
+              std::vector<Node> deserializedNodes;
               const size_t* subtree = mwd.subtree;
-              Deserialize(&subtree, &deserializedNode);
-              gnodes.enqueue(deserializedNode);
+              Deserialize(&subtree, &deserializedNodes);
+              for(auto dd : deserializedNodes){
+                gnodes.enqueue(dd);
+              }
+              qSize += deserializedNodes.size();
               free(mwd.subtree);
               rootsAvailable = false;
             }else{
