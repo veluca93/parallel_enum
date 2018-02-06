@@ -85,8 +85,8 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
  protected:
   void RunInternal(Enumerable<Node, Item>* system) override {
     moodycamel::ConcurrentQueue<Node> gnodes(_nthreads * 2);  // Global nodes
-    std::atomic<uint_fast32_t> waiting{0};                    // Waiting nodes
-    std::atomic<uint_fast32_t> gwaiting{0};
+    std::atomic<uint_fast32_t> waiting{0};                    // Waiting threads (on internal stealing)
+    std::atomic<uint_fast32_t> gwaiting{0};                   // Waiting threads (on external stealing)
     std::atomic<uint_fast32_t> stolen{0};                     // Stolen log
     std::atomic<uint_fast32_t> qSize{0};  // Precise size of global queue
     std::atomic<bool> terminate{false};
@@ -105,8 +105,8 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
       char padding[64] = {};
       (void)padding;
 
-      auto solution_cb = [this, &lnodes, &gnodes, &waiting, &stolen, &qSize, &id,
-                          system](const Node& node) {
+      std::function<bool(const Node&)> solution_cb = [this, &lnodes, &gnodes, &waiting, &stolen, &qSize, &id,
+                          system, &solution_cb](const Node& node) {
         if (qSize < waiting) {
           gnodes.enqueue(node);
           ++qSize;
@@ -114,7 +114,11 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
           ++stolen;
 #endif
         } else {
-          lnodes.push_back(node);
+          if (!system->CanUseRecursion()) {
+            lnodes.push_back(node);
+          } else {
+            system->ListChildren(node, solution_cb);
+          }
         }
         Enumerator<Node, Item>::ReportSolution(system, node);
         return true;
@@ -163,6 +167,7 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
             }
           }
 
+#define STEAL_MULTIPLE_NODES
           if (nodeSet) {
 #ifndef STEAL_MULTIPLE_NODES
             if (id == 0 && _checkStealCb && (*_checkStealCb)()) {
@@ -198,13 +203,13 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
 
         // Try to get more work.
         if (_moreWorkCb) {
-	  ++gwaiting;
+          ++gwaiting;
           if (id == 0) {
             DEBUG("Invoking callback.");
             MoreWorkData mwd = (*_moreWorkCb)();
             pthread_barrier_wait(&barrier);
             waiting = 0;
-	    gwaiting = 0;
+            gwaiting = 0;
             qSize = 0;
             if(mwd.info == MORE_WORK_RANGE){
               DEBUG("Callback invoked.");
