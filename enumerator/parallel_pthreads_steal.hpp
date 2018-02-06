@@ -86,6 +86,7 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
   void RunInternal(Enumerable<Node, Item>* system) override {
     moodycamel::ConcurrentQueue<Node> gnodes(_nthreads * 2);  // Global nodes
     std::atomic<uint_fast32_t> waiting{0};                    // Waiting nodes
+    std::atomic<uint_fast32_t> gwaiting{0};
     std::atomic<uint_fast32_t> stolen{0};                     // Stolen log
     std::atomic<uint_fast32_t> qSize{0};  // Precise size of global queue
     std::atomic<bool> terminate{false};
@@ -107,8 +108,8 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
       auto solution_cb = [this, &lnodes, &gnodes, &waiting, &stolen, &qSize, &id,
                           system](const Node& node) {
         if (qSize < waiting) {
-          ++qSize;
           gnodes.enqueue(node);
+          ++qSize;
 #ifdef PRINT_STOLEN
           ++stolen;
 #endif
@@ -124,20 +125,24 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
         while (true) {
           Node node;
           bool nodeSet = false;
-          if (rootsAvailable) {
-            size_t tmp = nextRoot++;
-            if (tmp < _maxRootId) {
-              system->GetRoot(tmp, solution_cb);
-            } else {
-              rootsAvailable = false;
-            }
-          }
 
           if (!lnodes.empty()) {
             // Pick from local nodes if available
             node = std::move(lnodes.back());
             lnodes.pop_back();
             nodeSet = true;
+          } else if (rootsAvailable) {
+            size_t tmp = nextRoot++;
+            if (tmp < _maxRootId) {
+              system->GetRoot(tmp, solution_cb);
+              if(!lnodes.empty()){
+                node = std::move(lnodes.back());
+                lnodes.pop_back();
+                nodeSet = true;
+              }
+            } else {
+              rootsAvailable = false;
+            }
           } else {
             // Otherwise pick from global nodes
             nodeSet = gnodes.try_dequeue(node);
@@ -147,7 +152,7 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
               do {
                 // std::this_thread::yield();
                 nodeSet = gnodes.try_dequeue(node);
-              } while (!nodeSet && waiting < (uint_fast32_t)_nthreads);
+              } while (!nodeSet && (waiting + gwaiting) < (uint_fast32_t)_nthreads);
 
               if (nodeSet) {
                 --waiting;
@@ -159,13 +164,32 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
           }
 
           if (nodeSet) {
-            system->ListChildren(node, solution_cb);
+#ifndef STEAL_MULTIPLE_NODES
             if (id == 0 && _checkStealCb && (*_checkStealCb)()) {
               std::vector<size_t> serializedNode;
-              Serialize(lnodes, &serializedNode);
+              Serialize(node, &serializedNode);
               (*_sendStealCb)(serializedNode);
-              lnodes.clear();
+            } else {
+#endif
+              system->ListChildren(node, solution_cb);
+#ifndef STEAL_MULTIPLE_NODES
+            }
+#endif
+            
+#ifdef STEAL_MULTIPLE_NODES
+            if (id == 0 && !lnodes.empty() && _checkStealCb && (*_checkStealCb)()) {
+              std::vector<size_t> serializedNode;
+              std::vector<Node> toSerialize;
+              for(size_t i = 0; i < 10 && !lnodes.empty(); i++){
+                toSerialize.push_back(lnodes.back());
+                lnodes.pop_back();
+              }
+              Serialize(toSerialize, &serializedNode);
+              //Serialize(lnodes, &serializedNode);
+              (*_sendStealCb)(serializedNode);
+              //lnodes.clear();
             } 
+#endif
           } else if (nextRoot >= _maxRootId) {
             break;  // No more local roots, try to grab from other computing
                     // nodes (distributed)
@@ -174,26 +198,35 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
 
         // Try to get more work.
         if (_moreWorkCb) {
+	  ++gwaiting;
           if (id == 0) {
             DEBUG("Invoking callback.");
             MoreWorkData mwd = (*_moreWorkCb)();
             pthread_barrier_wait(&barrier);
             waiting = 0;
-            qSize = 0
+	    gwaiting = 0;
+            qSize = 0;
             if(mwd.info == MORE_WORK_RANGE){
               DEBUG("Callback invoked.");
               nextRoot = mwd.range.first;
-              _maxRootId = mwd.range.second;;
+              _maxRootId = mwd.range.second;
               DEBUG("Waiting on barrier.");
               rootsAvailable = true;
             }else if(mwd.info == MORE_WORK_SUBTREE){
-              std::vector<Node> deserializedNodes;
               const size_t* subtree = mwd.subtree;
+#ifdef STEAL_MULTIPLE_NODES
+              std::vector<Node> deserializedNodes;
               Deserialize(&subtree, &deserializedNodes);
               for(auto dd : deserializedNodes){
                 gnodes.enqueue(dd);
               }
               qSize += deserializedNodes.size();
+#else
+              Node deserializedNode;
+              Deserialize(&subtree, &deserializedNode);
+              gnodes.enqueue(deserializedNode);
+              qSize += 1;
+#endif
               free(mwd.subtree);
               rootsAvailable = false;
             }else{

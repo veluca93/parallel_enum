@@ -17,16 +17,32 @@ using namespace std::chrono;
 #endif
 
 typedef enum{
-  TAG_STATS = 0,     // Termination stats
-  TAG_RANGE_REQUEST, // Range requests (if chunksPerNode != 1)
-  TAG_SUBTREE        // Subtree communications (tasks steal)
-}DistributedEnumTags;
-
-typedef enum{
-  WORKER_STATE_ROOTS = 0, // Normal execution, searching for roots
-  WORKER_STATE_SUBTREES,  // Roots terminated, stealing subtrees
-  WORKER_STATE_TERMINATED // Subtrees terminated, termination message sent
+  WORKER_STATE_ROOTS = 0,           // Normal execution, searching for roots
+  WORKER_STATE_SUBTREE_WAIT,        // Roots terminated, waiting for a subtree
+  WORKER_STATE_SUBTREE_PROCESSING,  // Roots terminated, processing a subtree
 }WorkerState;
+
+/**
+ * The MPI message we send between nodes is an array of elements of type 'size_t'.
+ * Let us call this array 'm'.
+ *
+ * m[0] is the message type.
+ * - if m[0] == MPI_MESSAGE_RANGE_REQUEST, no other elements will be present.
+ * - if m[0] == MPI_MESSAGE_RANGE_RESPONSE, m[1] is the first index of the range and m[2] is the last index (excluded).
+ * - if m[0] == MPI_MESSAGE_SUBTREE_REQUEST, no other elements will be present.
+ * - if m[0] == MPI_MESSAGE_SUBTREE_RESPONSE_LEN, m[1] is the length of the serialized data. If such message is received,
+ *   the receiver should perform another receive after that to receive m[1] elements corresponding to the serialized data
+ * - if m[0] == MPI_MESSAGE_TERMINATION, no other elements will be present
+ * - if m[0] == MPI_MESSAGE_STATS, m[1] will contain the cliques/kplexes count.
+ **/
+typedef enum{
+  MPI_MESSAGE_RANGE_REQUEST = 0,
+  MPI_MESSAGE_RANGE_RESPONSE,
+  MPI_MESSAGE_SUBTREE_REQUEST,
+  MPI_MESSAGE_SUBTREE_RESPONSE_LEN,
+  MPI_MESSAGE_TERMINATION,
+  MPI_MESSAGE_STATS
+}MpiMessageType;
 
 #if SIZE_MAX == UCHAR_MAX
    #define my_MPI_SIZE_T MPI_UNSIGNED_CHAR
@@ -66,7 +82,7 @@ public:
     std::chrono::high_resolution_clock::time_point minimum = std::chrono::time_point<std::chrono::system_clock>::max();
     size_t toReturn = 0;
     for(size_t i = 0; i < _lastRequest.size(); i++){
-      if(_workersStates[i] != WORKER_STATE_TERMINATED && _lastRequest[i] < minimum){
+      if(_lastRequest[i] < minimum && _workersStates[i] != WORKER_STATE_SUBTREE_WAIT){
         minimum = _lastRequest[i];
         toReturn = i;
       }
@@ -74,9 +90,9 @@ public:
     return toReturn;
   }
 
-  bool terminated(size_t exclude){
+  bool terminated(){
     for(size_t i = 0; i < _numWorkers; i++){
-      if(i != exclude && _workersStates[i] != WORKER_STATE_TERMINATED){
+      if(_workersStates[i] != WORKER_STATE_SUBTREE_WAIT){
         return false;
       }
     }
@@ -86,73 +102,69 @@ public:
   // Returns true if everyone terminated.
   bool WaitRangeRequest(size_t begin, size_t end){
     MPI_Status status;
-    int dummy;
-    MPI_Recv(&dummy, 1, MPI_INT, MPI_ANY_SOURCE, TAG_RANGE_REQUEST, MPI_COMM_WORLD, &status);
+    size_t req;
+    MPI_Recv(&req, 1, my_MPI_SIZE_T, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
+    assert(req == MPI_MESSAGE_RANGE_REQUEST);
     size_t stealerRank = status.MPI_SOURCE;
     int stealerId = RankToWorkerId(status.MPI_SOURCE);
     _lastRequest[stealerId] = std::chrono::high_resolution_clock::now();
     
     if(begin != _system->MaxRoots()){
       // Send a root
-      unsigned range[2];
-      range[0] = begin;
-      range[1] = end;
-      MPI_Send(range, 2, MPI_UNSIGNED, status.MPI_SOURCE, TAG_RANGE_REQUEST, MPI_COMM_WORLD);
+      size_t range[3];
+      range[0] = MPI_MESSAGE_RANGE_RESPONSE;
+      range[1] = begin;
+      range[2] = end;
+      MPI_Send(range, 3, my_MPI_SIZE_T, status.MPI_SOURCE, 0, MPI_COMM_WORLD);
     }else{
-      // If we begin == _system->MaxRoots() roots are finished and we will send a subtree.
-      _workersStates[stealerId] = WORKER_STATE_SUBTREES;
+      _workersStates[stealerId] = WORKER_STATE_SUBTREE_WAIT;
       bool somethingSent = false;
 
-      while(!somethingSent && !terminated(stealerId)){
+      while(!somethingSent && !terminated()){
         // Take something from the victim
         int victimId = GetStealVictim();
         int victimRank = WorkerIdToRank(victimId);
         assert(victimId != stealerId);
-        unsigned subtreeLength;
         DEBUG(stealerId << " needs something and we try to steal from " << victimId);
-        MPI_Sendrecv(&dummy, 1, MPI_INT, victimRank, TAG_SUBTREE, 
-                     &subtreeLength, 1, MPI_UNSIGNED, victimRank, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-                                       //TODO: We may rceive an MPI_INT if it is a range request.
-        // subtreeLenght is always > 0
-        if(status.MPI_TAG == TAG_SUBTREE){
+
+        size_t dummy = MPI_MESSAGE_SUBTREE_REQUEST;
+        MPI_Send(&dummy, 1, my_MPI_SIZE_T, victimRank, 0, MPI_COMM_WORLD);
+
+        size_t response[2];
+        MPI_Recv(response, 2, my_MPI_SIZE_T, victimRank, 0, MPI_COMM_WORLD, &status);
+        
+        if(response[0] == MPI_MESSAGE_SUBTREE_RESPONSE_LEN){
           // If subtree present, receive it.
+          size_t subtreeLength = response[1];
           size_t* subtree = (size_t*) malloc(sizeof(size_t) * subtreeLength);
-          MPI_Recv(subtree, subtreeLength, my_MPI_SIZE_T, victimRank, TAG_SUBTREE, MPI_COMM_WORLD, &status);
-          unsigned range[2];
-          range[0] =  _system->MaxRoots();
-          range[1] = subtreeLength; // End in this case represents the length of the subtree serialized data structure.
+          MPI_Recv(subtree, subtreeLength, my_MPI_SIZE_T, victimRank, 0, MPI_COMM_WORLD, &status);
+          size_t range[2];
+          range[0] = MPI_MESSAGE_SUBTREE_RESPONSE_LEN;
+          range[1] = subtreeLength;
 
           DEBUG("Worker " << victimId << " provided a subtree serialized with an array of length " << subtreeLength);
-          // Send the notification that there are no roots together with the subtree length to the worker which requested the range
-          MPI_Send(range, 2, MPI_UNSIGNED, stealerRank, TAG_RANGE_REQUEST, MPI_COMM_WORLD);
+          MPI_Send(range, 2, my_MPI_SIZE_T, stealerRank, 0, MPI_COMM_WORLD);
           // Send the subtree to the worker which requested the range
-          MPI_Send(subtree, subtreeLength, my_MPI_SIZE_T, stealerRank, TAG_SUBTREE, MPI_COMM_WORLD); 
+          MPI_Send(subtree, subtreeLength, my_MPI_SIZE_T, stealerRank, 0, MPI_COMM_WORLD); 
           free(subtree);
           somethingSent = true;
           DEBUG("Subtree sent");
-        }else{
-          // The victim wants something, it is terminated.
-          DEBUG("The victim needs some data itself, we terminate it (" << victimId << ")");
-          unsigned range[2];
-          range[0] = _system->MaxRoots();
-          range[1] = 0;
-          MPI_Send(range, 2, MPI_UNSIGNED, victimRank, TAG_RANGE_REQUEST, MPI_COMM_WORLD);
-          _workersStates[victimId] = WORKER_STATE_TERMINATED;
+          _workersStates[stealerId] = WORKER_STATE_SUBTREE_PROCESSING;
+        }else if(response[0] == MPI_MESSAGE_RANGE_REQUEST){
+          DEBUG("The victim needs some data itself, we skip it (" << victimId << ")");
+          _workersStates[victimId] = WORKER_STATE_SUBTREE_WAIT;
           _lastRequest[victimId] = std::chrono::high_resolution_clock::now();
-          DEBUG("Termination sent to the victim");
+        }else{
+          throw std::runtime_error("Unexpected message.");
         }
       }
 
-      if(!somethingSent){
-          DEBUG("No victims available, we terminate the stealer (" << stealerId << ")");
-          unsigned range[2];
-          range[0] = _system->MaxRoots();
-          range[1] = 0; // Subtree length = 0 to notify termination.
-          MPI_Send(range, 2, MPI_UNSIGNED, stealerRank, TAG_RANGE_REQUEST, MPI_COMM_WORLD);
-      }
-
-      if(terminated(stealerId)){
-        _workersStates[stealerId] = WORKER_STATE_TERMINATED;
+      if(terminated()){
+        DEBUG("Broadcasting termination message.");
+        size_t termination = MPI_MESSAGE_TERMINATION;
+        for(size_t i = 0; i < _numWorkers; i++){
+          MPI_Send(&termination, 1, my_MPI_SIZE_T, WorkerIdToRank(i), 0, MPI_COMM_WORLD);
+        }
         return true;
       }
     }
@@ -172,8 +184,7 @@ public:
     }else{
       rootsPerNode = maxRoots / (_chunksPerNode * _numWorkers); 
     }
-#define LB_HEURISTIC
-#ifdef LB_HEURISTIC
+#ifdef INVERTED_SCHEDULING
     nextRangeStart = maxRoots;
     while(nextRangeStart > 0){
       if(nextRangeStart >= rootsPerNode){
@@ -216,30 +227,34 @@ public:
   MoreWorkData GetMoreWork(){
     MoreWorkData mwd;
     MPI_Status status;
-    int dummy;
-    unsigned range[2];
-    //MPI_Send(&dummy, 1, MPI_INT, 0, TAG_RANGE_REQUEST, MPI_COMM_WORLD);
-    //MPI_Recv(range, 2, MPI_UNSIGNED, 0, TAG_RANGE_REQUEST, MPI_COMM_WORLD, &status);
-    MPI_Sendrecv(&dummy, 1, MPI_INT, 0, TAG_RANGE_REQUEST, 
-                 range, 2, MPI_UNSIGNED, 0, TAG_RANGE_REQUEST, MPI_COMM_WORLD, &status);
-    if(range[0] == _system->MaxRoots()){
-      // range[1] is the length of the subtree I'm going to receive.
-      // Now I'll receive a subtree since roots are finished.
-      size_t subtreeLength = range[1];
-      if(subtreeLength){
+    size_t req = MPI_MESSAGE_RANGE_REQUEST; 
+
+    // In a loop to discard the possible steal request received while asking for more data.    
+    size_t response[3];
+    response[0] = MPI_MESSAGE_SUBTREE_REQUEST;
+    while(response[0] == MPI_MESSAGE_SUBTREE_REQUEST){
+      MPI_Send(&req, 1, my_MPI_SIZE_T, 0, 0, MPI_COMM_WORLD);
+      MPI_Recv(response, 3, my_MPI_SIZE_T, 0, 0, MPI_COMM_WORLD, &status);
+
+      if(response[0] == MPI_MESSAGE_SUBTREE_RESPONSE_LEN){
+        // range[1] is the length of the subtree I'm going to receive.
+        // Now I'll receive a subtree since roots are finished.
+        size_t subtreeLength = response[1];
         size_t* subtree = (size_t*) malloc(sizeof(size_t) * subtreeLength);
-        MPI_Recv(subtree, subtreeLength, my_MPI_SIZE_T, 0, TAG_SUBTREE, MPI_COMM_WORLD, &status);
+        MPI_Recv(subtree, subtreeLength, my_MPI_SIZE_T, 0, 0, MPI_COMM_WORLD, &status);
         mwd.info = MORE_WORK_SUBTREE;
         mwd.subtree = subtree;
-        mwd.subtreeLength = subtreeLength;
-      }else{
+        mwd.subtreeLength = subtreeLength;      
+      }else if(response[0] == MPI_MESSAGE_RANGE_RESPONSE){
+        mwd.info = MORE_WORK_RANGE;
+        mwd.range.first = response[1];
+        mwd.range.second = response[2];
+      }else if(response[0] == MPI_MESSAGE_TERMINATION){
         DEBUG("Received termination message.");
         mwd.info = MORE_WORK_NOTHING;
+      }else if(response[0] != MPI_MESSAGE_SUBTREE_REQUEST){
+        throw std::runtime_error("Unexpected message.");
       }
-    }else{
-      mwd.info = MORE_WORK_RANGE;
-      mwd.range.first = range[0];
-      mwd.range.second = range[1];
     }
     return mwd;
   }
@@ -253,7 +268,7 @@ public:
   bool CheckStealRequest(){  
     MPI_Status status;
     int flag;
-    MPI_Iprobe(0, TAG_SUBTREE, MPI_COMM_WORLD, &flag, &status);
+    MPI_Iprobe(0, 0, MPI_COMM_WORLD, &flag, &status);
     if(flag){
       return true;
     }else{
@@ -269,12 +284,16 @@ public:
     MoreWork mr = std::bind(&Worker::GetMoreWork, this);
     CheckSteal cs = std::bind(&Worker::CheckStealRequest, this);
     SendSteal ss = [&](std::vector<size_t>& serializedData){
-      int dummy;
+      size_t dummy;
       MPI_Status status;
-      MPI_Recv(&dummy, 1, MPI_INT, 0, TAG_SUBTREE, MPI_COMM_WORLD, &status);
+      MPI_Recv(&dummy, 1, my_MPI_SIZE_T, 0, 0, MPI_COMM_WORLD, &status);
+      assert(dummy == MPI_MESSAGE_SUBTREE_REQUEST);
       unsigned subtreeLength = serializedData.size();
-      MPI_Send(&subtreeLength, 1, MPI_UNSIGNED, 0, TAG_SUBTREE, MPI_COMM_WORLD);
-      MPI_Send(serializedData.data(), subtreeLength, my_MPI_SIZE_T, 0, TAG_SUBTREE, MPI_COMM_WORLD);
+      size_t msg[2];
+      msg[0] = MPI_MESSAGE_SUBTREE_RESPONSE_LEN;
+      msg[1] = subtreeLength;
+      MPI_Send(msg, 2, my_MPI_SIZE_T, 0, 0, MPI_COMM_WORLD);
+      MPI_Send(serializedData.data(), subtreeLength, my_MPI_SIZE_T, 0, 0, MPI_COMM_WORLD);
     };
     tmp->SetCallbacks(&mr, &cs, &ss);
     tmp->Run(_system);
@@ -357,12 +376,17 @@ protected:
 
     // Send solutions count.
     if(_rank){
-      unsigned numSolutions = Enumerator<Node, Item>::solutions_found_;
-      MPI_Send(&numSolutions, 1, MPI_UNSIGNED, 0, TAG_STATS, MPI_COMM_WORLD);
+      size_t message[2];
+      message[0] = MPI_MESSAGE_STATS;
+      message[1] = Enumerator<Node, Item>::solutions_found_;
+      MPI_Send(message, 2, my_MPI_SIZE_T, 0, 0, MPI_COMM_WORLD);
     }else{
       for(int i = 1; i < _worldSize; i++){
-        unsigned numSolutions = 0;
-        MPI_Recv(&numSolutions, 1, MPI_UNSIGNED, i, TAG_STATS, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        size_t message[2];
+        do{
+          MPI_Recv(message, 2, my_MPI_SIZE_T, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        }while(message[0] != MPI_MESSAGE_STATS); // In a loop to clean possible messages not yet received.
+        size_t numSolutions = message[1];
         Enumerator<Node, Item>::solutions_found_ += numSolutions;
       }
     }
