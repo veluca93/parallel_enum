@@ -35,7 +35,7 @@ void ListChildren(const Node& node, Node& child_node, size_t k, size_t q,
   }
 
   // Maximal node: no children
-  if (node.IsMaximal()) return;
+  if (node.IsMaximal(k)) return;
   if (debug_mode) std::cout << "NOT MAXIMAL" << std::endl;
   // Too few cands
   if (node.CanPrune(q)) return;
@@ -134,7 +134,18 @@ struct Diam2KplexNodeImpl<Graph, 0> {
     }
   }
 
-  bool IsMaximal() const { return cands.empty() && excluded.empty(); }
+  bool IsMaximal(size_t k) const {
+    if (kplex.size() + 1 > k) {
+      return cands.empty() && excluded.empty();
+    }
+    for (size_t v : cands) {
+      if (counters[v] != kplex.size()) return false;
+    }
+    for (size_t v : excluded) {
+      if (counters[v] != kplex.size()) return false;
+    }
+    return true;
+  }
 
   bool CanPrune(size_t q) const { return cands.size() + kplex.size() < q; }
 
@@ -302,7 +313,7 @@ struct Diam2KplexNodeImpl<Graph, 0> {
 
   bool IsReallyMaximal(const Graph* graph, const std::vector<node_t>& subgraph,
                        size_t k, size_t q) const {
-    if (!IsMaximal()) return false;
+    if (!IsMaximal(k)) return false;
     if (kplex.size() < q) return false;
     if (!HasDiameterTwo(graph, subgraph, k)) return false;
     // Check neighs of the first k nodes that are smaller than v.
@@ -417,7 +428,6 @@ class Diam2KplexNode {
   Diam2KplexNodeImpl<Graph, 0> impl0_;
   size_t current_impl_ = 0;
 };
-
 
 template <typename Graph>
 class Diam2KplexEnumeration
