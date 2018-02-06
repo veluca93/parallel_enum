@@ -5,7 +5,8 @@
 // This class represent a family that is enumerable by doing
 // visit on a directed forest. Implementations should ensure
 // that calls to ListRoots and ListChildren are thread-safe, but
-// may assume that they are not recursive.
+// may assume that they are not recursive if they do not override
+// CanUseRecursion.
 template <typename Node, typename Item>
 class Enumerable {
  public:
@@ -21,6 +22,9 @@ class Enumerable {
   // ListRoots and ListChildren are done to perform final
   // clean ups.
   virtual void CleanUp() {}
+
+  // Returns true if the enumerator may use recursive calls.
+  virtual bool CanUseRecursion() { return false; }
 
   // The maximum possible number of roots.
   virtual size_t MaxRoots() = 0;

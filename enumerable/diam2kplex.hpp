@@ -44,18 +44,14 @@ void ListChildren(const Node& node, Node& child_node, size_t k, size_t q,
   if (node.HasUniversalInExcl(graph, subgraph)) return;
   // if (debug_mode) std::cout << "NO UNIVERSAL IN EXCL" << std::endl;
   // Find total counters for nodes in cands.
-  thread_local std::vector<size_t> universals;
-  universals.clear();
-  thread_local std::vector<size_t> sorted_cands;
-  sorted_cands.clear();
+  std::vector<size_t> universals;
+  std::vector<size_t> sorted_cands;
   node.GetCands(graph, subgraph, enable_pivoting, k, &universals,
                 &sorted_cands);
 
   // If there is at least one universal node in cands, fast forward.
-  thread_local std::vector<size_t> add_to_excl;
-  thread_local std::vector<bool> add_to_excl_bitset;
-  add_to_excl.clear();
-  add_to_excl_bitset.clear();
+  std::vector<size_t> add_to_excl;
+  std::vector<bool> add_to_excl_bitset;
   add_to_excl_bitset.resize(subgraph.size());
 
   if (!universals.empty()) {
@@ -453,6 +449,8 @@ class Diam2KplexEnumeration
 
   void SetUp() override {}
 
+  bool CanUseRecursion() override { return true; }
+
   size_t MaxRoots() override { return graph_->size(); }
 
   Kplex<node_t> NodeToItem(const Diam2KplexNode<Graph>& node) override {
@@ -512,7 +510,7 @@ class Diam2KplexEnumeration
 
   void ListChildren(const Diam2KplexNode<Graph>& node,
                     const NodeCallback& cb) override {
-    thread_local Diam2KplexNode<Graph> child_node;
+    Diam2KplexNode<Graph> child_node;
     node.ListChildren(child_node, k_, q_, enable_pivoting_, graph_.get(),
                       [&]() { return cb(child_node); });
   }
