@@ -478,16 +478,36 @@ class Diam2KplexEnumeration
     thread_local Diam2KplexNode<Graph> node;
     node.Clear();
     thread_local std::vector<bool> subgraph_added(graph_->size());
-    node.AddToSubgraph(v);
     subgraph_added[v] = true;
-    for (node_t n : graph_->fwd_neighs(v)) {
-      node.AddToSubgraph(n);
+    node.AddToSubgraph(v);
+    std::vector<node_t> sg;
+    for (node_t n: graph_->fwd_neighs(v)) {
+      sg.push_back(n);
       subgraph_added[n] = true;
+    }
+    auto filter_sg = [&](const std::vector<node_t>& sg) {
+        std::vector<node_t> filtered;
+        for (size_t i=0; i<sg.size(); i++) {
+            size_t count = 0;
+            for (size_t j=0; j<sg.size(); j++) {
+                if (graph_->are_neighs(sg[i], sg[j]))count++;
+            }
+            if (count +2*k_>= q_) filtered.push_back(sg[i]);
+        }
+        return filtered;
+    };
+    size_t sz;
+    do {
+        sz = sg.size();
+        sg = filter_sg(sg);
+    } while (sg.size() != sz);
+    for (node_t n : sg) {
+      node.AddToSubgraph(n);
     }
     if (k_ != 1) {
       thread_local std::vector<node_t> subgraph_candidates;
       thread_local std::vector<uint32_t> subgraph_counts(graph_->size());
-      for (node_t n : graph_->fwd_neighs(v)) {
+      for (node_t n : sg) {
         for (node_t nn : graph_->neighs(n)) {
           if (nn > v && !subgraph_added[nn]) {
             if (!subgraph_counts[nn]) subgraph_candidates.push_back(nn);
@@ -496,7 +516,7 @@ class Diam2KplexEnumeration
         }
       }
       for (node_t n : subgraph_candidates) {
-        if (subgraph_counts[n] + 2 * k_ > q_) {
+        if (subgraph_counts[n] + 2 * k_ >= q_ + 2) {
           node.AddToSubgraph(n);
         }
         subgraph_counts[n] = 0;
@@ -504,6 +524,7 @@ class Diam2KplexEnumeration
       subgraph_candidates.clear();
     }
     for (node_t n : node.Subgraph()) subgraph_added[n] = false;
+    for (node_t n: graph_->fwd_neighs(v)) subgraph_added[n] = false;
     node.Init(graph_.get(), k_);
     cb(node);
   }
