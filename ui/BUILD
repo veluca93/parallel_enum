@@ -24,3 +24,13 @@ cc_binary(
         "@com_google_absl//absl/memory",
     ],
 )
+
+cc_binary(
+    name = "stats",
+    srcs = ["stats.cpp"],
+    deps = [
+        "//external:gflags",
+        "//permute",
+        "//util:graph",
+    ],
+)

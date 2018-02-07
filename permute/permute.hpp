@@ -38,6 +38,14 @@ std::vector<node_t> DegeneracyOrder(const graph_t<node_t, label_t>& graph) {
   return perm;
 }
 
+template <typename node_t, typename label_t>
+std::vector<node_t> RandomOrder(const graph_t<node_t, label_t>& graph) {
+  std::vector<node_t> ans;
+  for (size_t i = 0; i < graph.size(); i++) ans.push_back(i);
+  std::random_shuffle(ans.begin(), ans.end());
+  return ans;
+}
+
 extern template std::vector<uint32_t> DegeneracyOrder(
     const graph_t<uint32_t, void>&);
 extern template std::vector<uint32_t> DegeneracyOrder(
