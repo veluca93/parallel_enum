@@ -24,6 +24,7 @@ template <typename Node, typename Graph>
 void ListChildren(const Node& node, Node& child_node, size_t k, size_t q,
                   bool enable_pivoting, Graph* graph,
                   const std::vector<typename Graph::node_t>& subgraph,
+                  const std::vector<std::vector<typename Graph::node_t>>& nadj,
                   const std::function<bool()>& cb) {
   if (debug_mode && node.ToItem(subgraph).size() == 1) {
     std::cout << "=============== CHANGE ROOT (" << subgraph[0]
@@ -41,12 +42,12 @@ void ListChildren(const Node& node, Node& child_node, size_t k, size_t q,
   if (node.CanPrune(q)) return;
   if (debug_mode) std::cout << "CANNOT PRUNE" << std::endl;
   // Universal node in excluded: no valid children
-  if (node.HasUniversalInExcl(graph, subgraph)) return;
+  if (node.HasUniversalInExcl(graph, subgraph, nadj)) return;
   // if (debug_mode) std::cout << "NO UNIVERSAL IN EXCL" << std::endl;
   // Find total counters for nodes in cands.
   std::vector<size_t> universals;
   std::vector<size_t> sorted_cands;
-  node.GetCands(graph, subgraph, enable_pivoting, k, &universals,
+  node.GetCands(graph, subgraph, nadj, enable_pivoting, k, &universals,
                 &sorted_cands);
 
   // If there is at least one universal node in cands, fast forward.
@@ -57,9 +58,9 @@ void ListChildren(const Node& node, Node& child_node, size_t k, size_t q,
   if (!universals.empty()) {
     child_node = node;
     for (size_t u : universals) {
-      child_node.AddToKplex(graph, subgraph, u, k);
+      child_node.AddToKplex(graph, subgraph, nadj, u, k);
     }
-    child_node.UpdateCandAndExcl(graph, subgraph, add_to_excl,
+    child_node.UpdateCandAndExcl(graph, subgraph, nadj, add_to_excl,
                                  add_to_excl_bitset, k);
     cb();
     return;
@@ -68,8 +69,8 @@ void ListChildren(const Node& node, Node& child_node, size_t k, size_t q,
   // Non-unary children
   for (size_t c : sorted_cands) {
     child_node = node;
-    child_node.AddToKplex(graph, subgraph, c, k);
-    child_node.UpdateCandAndExcl(graph, subgraph, add_to_excl,
+    child_node.AddToKplex(graph, subgraph, nadj, c, k);
+    child_node.UpdateCandAndExcl(graph, subgraph, nadj, add_to_excl,
                                  add_to_excl_bitset, k);
 
     if (!cb()) return;
@@ -87,12 +88,18 @@ struct Diam2KplexNodeImpl<Graph, 0> {
   using node_t = typename Graph::node_t;
   std::vector<size_t> kplex;
   std::vector<uint8_t> counters;
+  std::vector<uint8_t> status;
   std::vector<size_t> non_neighs;
   std::vector<size_t> cands;
   std::vector<size_t> excluded;
+  static const uint8_t no_status = 0;
+  static const uint8_t in_kplex = 1;
+  static const uint8_t in_cand = 2;
+  static const uint8_t in_excl = 3;
   void Serialize(std::vector<size_t>* out) const {
     ::Serialize(kplex, out);
     ::Serialize(counters, out);
+    ::Serialize(status, out);
     ::Serialize(non_neighs, out);
     ::Serialize(cands, out);
     ::Serialize(excluded, out);
@@ -100,23 +107,26 @@ struct Diam2KplexNodeImpl<Graph, 0> {
   void Deserialize(const size_t** in) {
     ::Deserialize(in, &kplex);
     ::Deserialize(in, &counters);
+    ::Deserialize(in, &status);
     ::Deserialize(in, &non_neighs);
     ::Deserialize(in, &cands);
     ::Deserialize(in, &excluded);
   }
-  void Init(const Graph* graph, const std::vector<node_t>& subgraph, size_t k) {
+  void Init(const Graph* graph, const std::vector<node_t>& subgraph,
+            const std::vector<std::vector<node_t>>& nadj, size_t k) {
     kplex.clear();
     cands.clear();
     excluded.clear();
     counters.clear();
+    status.clear();
     non_neighs.clear();
-    kplex.push_back(0);
     counters.resize(subgraph.size());
+    status.resize(subgraph.size());
     non_neighs.resize(k * subgraph.size());
-    for (size_t i = 0; i < subgraph.size(); i++) {
-      if (!graph->are_neighs(subgraph[0], subgraph[i])) {
-        non_neighs[k * i + counters[i]++] = 0;
-      }
+    kplex.push_back(0);
+    status[0] = in_kplex;
+    for (size_t i : nadj[0]) {
+      non_neighs[k * i + counters[i]++] = 0;
     }
     if (debug_mode) {
       std::cout << "SUBGRAPH FOR " << subgraph[0] << std::endl;
@@ -127,6 +137,7 @@ struct Diam2KplexNodeImpl<Graph, 0> {
     }
     for (size_t i = 1; i < subgraph.size(); i++) {
       cands.push_back(i);
+      status[i] = in_cand;
     }
   }
 
@@ -146,15 +157,15 @@ struct Diam2KplexNodeImpl<Graph, 0> {
   bool CanPrune(size_t q) const { return cands.size() + kplex.size() < q; }
 
   bool HasUniversalInExcl(const Graph* graph,
-                          const std::vector<node_t>& subgraph) const {
+                          const std::vector<node_t>& subgraph,
+                          const std::vector<std::vector<node_t>>& nadj) const {
     for (size_t u : excluded) {
       if (counters[u] != 0) continue;
       bool is_universal = true;
-      for (size_t v : cands) {
-        if (!graph->are_neighs(subgraph[u], subgraph[v])) {
-          is_universal = false;
-          break;
-        }
+      for (size_t v : nadj[u]) {
+        if (status[v] != in_cand) continue;
+        is_universal = false;
+        break;
       }
       if (is_universal) return true;
     }
@@ -162,6 +173,7 @@ struct Diam2KplexNodeImpl<Graph, 0> {
   }
 
   void GetCands(const Graph* graph, const std::vector<node_t>& subgraph,
+                const std::vector<std::vector<node_t>>& nadj,
                 bool enable_pivoting, size_t k, std::vector<size_t>* universals,
                 std::vector<size_t>* real_cands) const {
     if (cands.size() == 0) return;
@@ -169,10 +181,8 @@ struct Diam2KplexNodeImpl<Graph, 0> {
     cand_counters.clear();
     cand_counters.resize(subgraph.size());
     for (size_t u : cands) {
-      for (size_t v : cands) {
-        if (u != v && !graph->are_neighs(subgraph[u], subgraph[v])) {
-          cand_counters[u]++;
-        }
+      for (size_t v : nadj[u]) {
+        if (status[v] == in_cand && u != v) cand_counters[u]++;
       }
       if (counters[u] == 0 && cand_counters[u] == 0) {
         universals->push_back(u);
@@ -184,21 +194,25 @@ struct Diam2KplexNodeImpl<Graph, 0> {
       size_t best = cands[0];
       size_t best_not_cuts = cands.size();
       auto not_cuts = [&](size_t u, const std::function<void(size_t)>& cb) {
-        for (size_t v : cands) {
-          if (!graph->are_neighs(subgraph[u], subgraph[v])) {
-            cb(v);
-            continue;
-          }
-          bool ok = true;
-          if (k != 1) {
+        if (k != 1) {
+          for (size_t v : cands) {
+            if (!graph->are_neighs(subgraph[u], subgraph[v])) {
+              cb(v);
+              continue;
+            }
+            bool ok = true;
             for (size_t i = k * u; i < k * u + counters[u]; i++) {
               if (!graph->are_neighs(subgraph[v], subgraph[non_neighs[i]])) {
                 ok = false;
                 break;
               }
             }
+            if (!ok) cb(v);
           }
-          if (!ok) cb(v);
+        } else {
+          for (size_t v : nadj[u]) {
+            if (status[v] == in_cand) cb(v);
+          }
         }
       };
       for (size_t u : cands) {
@@ -231,8 +245,10 @@ struct Diam2KplexNodeImpl<Graph, 0> {
   }
 
   void AddToKplex(const Graph* graph, const std::vector<node_t>& subgraph,
-                  size_t c, size_t k) {
+                  const std::vector<std::vector<node_t>>& nadj, size_t c,
+                  size_t k) {
     kplex.push_back(c);
+    status[c] = in_kplex;
     if (debug_mode) {
       std::cout << "NEW KPLEX: " << absl::StrJoin(ToItem(subgraph), ", ")
                 << std::endl;
@@ -241,13 +257,11 @@ struct Diam2KplexNodeImpl<Graph, 0> {
                   << std::endl;
       }
     }
-    for (size_t e = 0; e < subgraph.size(); e++) {
-      if (!graph->are_neighs(subgraph[c], subgraph[e])) {
-        if (counters[e] < k) {
-          non_neighs[k * e + counters[e]] = c;
-        }
-        counters[e]++;
+    for (size_t e : nadj[c]) {
+      if (counters[e] < k) {
+        non_neighs[k * e + counters[e]] = c;
       }
+      counters[e]++;
     }
     if (debug_mode) {
       for (size_t i = 0; i < subgraph.size(); i++) {
@@ -259,6 +273,7 @@ struct Diam2KplexNodeImpl<Graph, 0> {
 
   void UpdateCandAndExcl(const Graph* graph,
                          const std::vector<node_t>& subgraph,
+                         const std::vector<std::vector<node_t>>& nadj,
                          const std::vector<size_t>& add_to_excl,
                          const std::vector<bool>& add_to_excl_bitset,
                          size_t k) {
@@ -266,13 +281,19 @@ struct Diam2KplexNodeImpl<Graph, 0> {
     excluded_cache = excluded;
     excluded.clear();
     for (size_t e : excluded_cache) {
-      if (CanAdd(graph, subgraph, k, e)) {
+      if (CanAdd(graph, subgraph, nadj, k, e)) {
         excluded.push_back(e);
+        status[e] = in_excl;
+      } else {
+        status[e] = no_status;
       }
     }
     for (size_t e : add_to_excl) {
-      if (CanAdd(graph, subgraph, k, e)) {
+      if (CanAdd(graph, subgraph, nadj, k, e)) {
         excluded.push_back(e);
+        status[e] = in_excl;
+      } else {
+        status[e] = no_status;
       }
     }
 
@@ -280,13 +301,19 @@ struct Diam2KplexNodeImpl<Graph, 0> {
     cands_cache = cands;
     cands.clear();
     for (size_t e : cands_cache) {
-      if (!add_to_excl_bitset[e] && CanAdd(graph, subgraph, k, e)) {
+      if (!add_to_excl_bitset[e] && CanAdd(graph, subgraph, nadj, k, e)) {
         cands.push_back(e);
+        status[e] = in_cand;
+      } else {
+        status[e] = no_status;
       }
     }
+    if (debug_mode && !std::is_sorted(cands.begin(), cands.end()))
+      throw std::runtime_error("ciao");
   }
 
   bool HasDiameterTwo(const Graph* graph, const std::vector<node_t>& subgraph,
+                      const std::vector<std::vector<node_t>>& nadj,
                       size_t k) const {
     if (kplex.size() + 2 > 2 * k) return true;
     if (k == 2) return true;
@@ -308,15 +335,16 @@ struct Diam2KplexNodeImpl<Graph, 0> {
   }
 
   bool IsReallyMaximal(const Graph* graph, const std::vector<node_t>& subgraph,
-                       size_t k, size_t q) const {
+                       const std::vector<std::vector<node_t>>& nadj, size_t k,
+                       size_t q) const {
     if (!IsMaximal(k)) return false;
     if (kplex.size() < q) return false;
-    if (!HasDiameterTwo(graph, subgraph, k)) return false;
+    if (!HasDiameterTwo(graph, subgraph, nadj, k)) return false;
     // Check neighs of the first k nodes that are smaller than v.
     for (size_t i = 0; i < k && i < kplex.size(); i++) {
       for (node_t n : graph->neighs(subgraph[kplex[i]])) {
         if (n >= subgraph[0]) break;
-        if (CanAdd(graph, subgraph, k, n, /*is_index*/ false)) {
+        if (CanAdd(graph, subgraph, nadj, k, n, /*is_index*/ false)) {
           return false;
         }
       }
@@ -333,9 +361,14 @@ struct Diam2KplexNodeImpl<Graph, 0> {
   }
 
  protected:
-  bool CanAdd(const Graph* graph, const std::vector<node_t>& subgraph, size_t k,
+  bool CanAdd(const Graph* graph, const std::vector<node_t>& subgraph,
+              const std::vector<std::vector<node_t>>& nadj, size_t k,
               size_t idx, bool is_index = true) const {
     uint32_t v_cnt = 1;
+    if (is_index && status[idx] == in_kplex) {
+      if (debug_mode) std::cout << "NO (in kplex)" << std::endl;
+      return false;
+    }
     size_t v = is_index ? subgraph[idx] : idx;
     if (debug_mode) {
       std::cout << "CAN_ADD " << v << " TO "
@@ -347,10 +380,6 @@ struct Diam2KplexNodeImpl<Graph, 0> {
       }
     }
     for (size_t i = 0; i < kplex.size(); i++) {
-      if (v == subgraph[kplex[i]]) {
-        if (debug_mode) std::cout << "NO (in kplex)" << std::endl;
-        return false;
-      }
       if (!graph->are_neighs(v, subgraph[kplex[i]])) {
         v_cnt++;
         if ((size_t)counters[kplex[i]] + 1 > k) {
@@ -374,13 +403,18 @@ template <typename Graph>
 class Diam2KplexNode {
  public:
   using node_t = typename Graph::node_t;
-  void Clear() { subgraph_ = std::make_shared<std::vector<node_t>>(); }
+  void Clear() {
+    if (!subgraph_)
+      subgraph_ = std::make_shared<std::vector<node_t>>();
+    else
+      subgraph_->clear();
+  }
   void AddToSubgraph(node_t v) { subgraph_->push_back(v); }
   const std::vector<node_t>& Subgraph() const { return *subgraph_; }
 
   bool IsReallyMaximal(const Graph* graph, size_t k, size_t q) const {
     if (current_impl_ == 0)
-      return impl0_.IsReallyMaximal(graph, *subgraph_, k, q);
+      return impl0_.IsReallyMaximal(graph, *subgraph_, *nadj_, k, q);
     throw std::runtime_error("Invalid current implementation!");
   }
 
@@ -391,7 +425,24 @@ class Diam2KplexNode {
 
   void Init(const Graph* graph, size_t k) {
     current_impl_ = 0;
-    impl0_.Init(graph, *subgraph_, k);
+    if (!nadj_) {
+      nadj_ = std::make_shared<
+          typename std::remove_reference<decltype(*nadj_)>::type>(
+          subgraph_->size());
+    } else {
+      if (nadj_->size() < subgraph_->size()) {
+        nadj_->resize(subgraph_->size());
+      }
+      for (auto& v : *nadj_) v.clear();
+    }
+    for (size_t i = 0; i < subgraph_->size(); i++) {
+      for (size_t j = 0; j < subgraph_->size(); j++) {
+        if (!graph->are_neighs((*subgraph_)[i], (*subgraph_)[j])) {
+          (*nadj_)[i].push_back(j);
+        }
+      }
+    }
+    impl0_.Init(graph, *subgraph_, *nadj_, k);
   }
 
   void ListChildren(Diam2KplexNode<Graph>& child_node, size_t k, size_t q,
@@ -399,10 +450,11 @@ class Diam2KplexNode {
                     const std::function<bool()>& cb) const {
     child_node.current_impl_ = current_impl_;
     child_node.subgraph_ = subgraph_;
+    child_node.nadj_ = nadj_;
     switch (current_impl_) {
       case 0:
         return ::ListChildren(impl0_, child_node.impl0_, k, q, enable_pivoting,
-                              graph, *subgraph_, cb);
+                              graph, *subgraph_, *nadj_, cb);
       default:
         throw std::runtime_error("Invalid current implementation!");
     }
@@ -410,17 +462,21 @@ class Diam2KplexNode {
 
   void Serialize(std::vector<size_t>* out) const {
     ::Serialize(subgraph_, out);
+    ::Serialize(nadj_, out);
     ::Serialize(impl0_, out);
     ::Serialize(current_impl_, out);
   }
   void Deserialize(const size_t** in) {
     ::Deserialize(in, &subgraph_);
+    ::Deserialize(in, &nadj_);
     ::Deserialize(in, &impl0_);
     ::Deserialize(in, &current_impl_);
   }
 
  private:
   std::shared_ptr<std::vector<node_t>> subgraph_;
+  // Complement of the subgraph induced by subgraph_
+  std::shared_ptr<std::vector<std::vector<node_t>>> nadj_;
   Diam2KplexNodeImpl<Graph, 0> impl0_;
   size_t current_impl_ = 0;
 };

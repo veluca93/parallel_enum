@@ -5,6 +5,7 @@
 #include <memory>
 #include <numeric>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
