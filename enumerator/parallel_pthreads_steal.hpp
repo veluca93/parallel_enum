@@ -31,8 +31,9 @@ static void pin(std::thread& t, int i) {
 }
 
 typedef enum{
-  MORE_WORK_RANGE = 0,
-  MORE_WORK_SUBTREE,
+  MORE_WORK_RANGE = 0,  // Assigned roots
+  MORE_WORK_ROOTS,      // Stolen roots
+  MORE_WORK_SUBTREE,    // Stolen subtree
   MORE_WORK_NOTHING
 }MoreWorkInfo;
 
@@ -45,7 +46,7 @@ typedef struct{
 
 using MoreWork = std::function<MoreWorkData()>;
 using CheckSteal = std::function<bool()>;
-using SendSteal = std::function<void(std::vector<size_t>&)>;
+using SendSteal = std::function<void(std::vector<size_t>&, bool areRoots)>;
 
 template <typename Node, typename Item>
 class ParallelPthreadsSteal : public Enumerator<Node, Item> {
@@ -85,46 +86,95 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
  protected:
   void RunInternal(Enumerable<Node, Item>* system) override {
     moodycamel::ConcurrentQueue<Node> gnodes(_nthreads * 2);  // Global nodes
+    moodycamel::ConcurrentQueue<size_t> possibleRoots;        // Global roots
     std::atomic<uint_fast32_t> waiting{0};                    // Waiting threads (on internal stealing)
     std::atomic<uint_fast32_t> gwaiting{0};                   // Waiting threads (on external stealing)
     std::atomic<uint_fast32_t> stolen{0};                     // Stolen log
-    std::atomic<uint_fast32_t> qSize{0};  // Precise size of global queue
+    std::atomic<uint_fast32_t> qSize{0};                      // Precise size of global queue
+    std::atomic<uint_fast32_t> rootsSize{0};                  // Precise size of roots queue
     std::atomic<bool> terminate{false};
-    std::atomic<size_t> nextRoot{_minRootId};
+  
     if (!_maxRootId) {
       _maxRootId = system->MaxRoots();
+    }
+
+    for(size_t i = _minRootId; i < _maxRootId; i++){
+      possibleRoots.enqueue(i);
+      ++rootsSize;
     }
     pthread_barrier_t barrier;
     pthread_barrier_init(&barrier, NULL, _nthreads);
 
     // Thread code
     auto worker_thread = [&](int id) {
-      bool rootsAvailable = true;
       system->SetUp();
       std::vector<Node> lnodes;  // Local nodes
       char padding[64] = {};
       (void)padding;
 
       std::function<bool(const Node&)> solution_cb = [this, &lnodes, &gnodes, &waiting, &stolen, &qSize, &id,
-                          system, &solution_cb](const Node& node) {
-        if (qSize < waiting) {
-          gnodes.enqueue(node);
-          ++qSize;
-#ifdef PRINT_STOLEN
-          ++stolen;
-#endif
-        } else {
-          if (!system->CanUseRecursion()) {
-            lnodes.push_back(node);
+                          system, &solution_cb, &rootsSize, &possibleRoots](const Node& node) {
+        bool offloadedNode = false;
+        // Stealing management
+        if (id == 0 && _checkStealCb && (*_checkStealCb)()) {
+          std::vector<size_t> serializedNode;
+          std::vector<size_t> rootsToSend;
+          while(rootsSize && rootsToSend.size() < rootsSize /* && rootsSize > 10 */){
+            size_t tmp;
+            if(possibleRoots.try_dequeue(tmp)){
+              --rootsSize;
+              rootsToSend.push_back(tmp);
+            }
+          }
+
+          if(!rootsToSend.empty()){
+              // Send roots
+              Serialize(rootsToSend, &serializedNode);
+              (*_sendStealCb)(serializedNode, true);
           } else {
-            system->ListChildren(node, solution_cb);
+            // Send subtree
+//#define STEAL_MULTIPLE_NODES            
+#ifdef STEAL_MULTIPLE_NODES
+            if (!lnodes.empty()) {
+              /*
+              std::vector<Node> toSerialize;
+              for(size_t i = 0; i < 10 && !lnodes.empty(); i++){
+                toSerialize.push_back(lnodes.back());
+                lnodes.pop_back();
+              }
+              Serialize(toSerialize, &serializedNode);
+              */
+              Serialize(lnodes, &serializedNode);
+              (*_sendStealCb)(serializedNode, false);
+              lnodes.clear();
+            } 
+#else
+            offloadedNode = true;
+            Serialize(node, &serializedNode);
+            (*_sendStealCb)(serializedNode, false);
+#endif
+          }
+        }
+
+        if (!offloadedNode) {
+          if (qSize < waiting) {
+            gnodes.enqueue(node);
+            ++qSize;
+#ifdef PRINT_STOLEN
+            ++stolen;
+#endif
+          } else {
+            if (!system->CanUseRecursion()) {
+              lnodes.push_back(node);
+            } else {
+              system->ListChildren(node, solution_cb);
+            }
           }
         }
         Enumerator<Node, Item>::ReportSolution(system, node);
         return true;
       };
 
-      rootsAvailable = true;
       while (!terminate) {
         while (true) {
           Node node;
@@ -135,17 +185,16 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
             node = std::move(lnodes.back());
             lnodes.pop_back();
             nodeSet = true;
-          } else if (rootsAvailable) {
-            size_t tmp = nextRoot++;
-            if (tmp < _maxRootId) {
+          } else if (rootsSize) {
+            size_t tmp;
+            if(possibleRoots.try_dequeue(tmp)){
+              --rootsSize;
               system->GetRoot(tmp, solution_cb);
               if(!lnodes.empty()){
                 node = std::move(lnodes.back());
                 lnodes.pop_back();
                 nodeSet = true;
               }
-            } else {
-              rootsAvailable = false;
             }
           } else {
             // Otherwise pick from global nodes
@@ -167,35 +216,10 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
             }
           }
 
-#define STEAL_MULTIPLE_NODES
+
           if (nodeSet) {
-#ifndef STEAL_MULTIPLE_NODES
-            if (id == 0 && _checkStealCb && (*_checkStealCb)()) {
-              std::vector<size_t> serializedNode;
-              Serialize(node, &serializedNode);
-              (*_sendStealCb)(serializedNode);
-            } else {
-#endif
-              system->ListChildren(node, solution_cb);
-#ifndef STEAL_MULTIPLE_NODES
-            }
-#endif
-            
-#ifdef STEAL_MULTIPLE_NODES
-            if (id == 0 && !lnodes.empty() && _checkStealCb && (*_checkStealCb)()) {
-              std::vector<size_t> serializedNode;
-              std::vector<Node> toSerialize;
-              for(size_t i = 0; i < 10 && !lnodes.empty(); i++){
-                toSerialize.push_back(lnodes.back());
-                lnodes.pop_back();
-              }
-              Serialize(toSerialize, &serializedNode);
-              //Serialize(lnodes, &serializedNode);
-              (*_sendStealCb)(serializedNode);
-              //lnodes.clear();
-            } 
-#endif
-          } else if (nextRoot >= _maxRootId) {
+            system->ListChildren(node, solution_cb);
+          } else if (!rootsSize) {
             break;  // No more local roots, try to grab from other computing
                     // nodes (distributed)
           }
@@ -213,12 +237,24 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
             qSize = 0;
             if(mwd.info == MORE_WORK_RANGE){
               DEBUG("Callback invoked.");
-              nextRoot = mwd.range.first;
-              _maxRootId = mwd.range.second;
+              for(size_t i = mwd.range.first; i < mwd.range.second; i++){
+                possibleRoots.enqueue(i);
+                ++rootsSize;
+              }
               DEBUG("Waiting on barrier.");
-              rootsAvailable = true;
-            }else if(mwd.info == MORE_WORK_SUBTREE){
+            } else if(mwd.info == MORE_WORK_ROOTS) {
               const size_t* subtree = mwd.subtree;
+
+              std::vector<size_t> additionalRoots;
+              Deserialize(&subtree, &additionalRoots);
+              for(auto tmp : additionalRoots){
+                possibleRoots.enqueue(tmp);
+                ++rootsSize;
+              }
+              free(mwd.subtree);              
+            } else if(mwd.info == MORE_WORK_SUBTREE) {
+              const size_t* subtree = mwd.subtree;
+
 #ifdef STEAL_MULTIPLE_NODES
               std::vector<Node> deserializedNodes;
               Deserialize(&subtree, &deserializedNodes);
@@ -232,8 +268,8 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
               gnodes.enqueue(deserializedNode);
               qSize += 1;
 #endif
+
               free(mwd.subtree);
-              rootsAvailable = false;
             }else{
               terminate = true;
             }
@@ -246,9 +282,6 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
             pthread_barrier_wait(&barrier);
             // Wait for zero to do its stuff
             pthread_barrier_wait(&barrier);
-            if (nextRoot < _maxRootId){
-              rootsAvailable = true;
-            }
           }
         } else {
           terminate = true;

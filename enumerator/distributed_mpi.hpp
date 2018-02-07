@@ -18,8 +18,8 @@ using namespace std::chrono;
 
 typedef enum{
   WORKER_STATE_ROOTS = 0,           // Normal execution, searching for roots
-  WORKER_STATE_SUBTREE_WAIT,        // Roots terminated, waiting for a subtree
-  WORKER_STATE_SUBTREE_PROCESSING,  // Roots terminated, processing a subtree
+  WORKER_STATE_STEAL_WAIT,        // Roots terminated, waiting for a subtree
+  WORKER_STATE_STEAL_PROCESSING,  // Roots terminated, processing a subtree
 }WorkerState;
 
 /**
@@ -29,17 +29,20 @@ typedef enum{
  * m[0] is the message type.
  * - if m[0] == MPI_MESSAGE_RANGE_REQUEST, no other elements will be present.
  * - if m[0] == MPI_MESSAGE_RANGE_RESPONSE, m[1] is the first index of the range and m[2] is the last index (excluded).
- * - if m[0] == MPI_MESSAGE_SUBTREE_REQUEST, no other elements will be present.
- * - if m[0] == MPI_MESSAGE_SUBTREE_RESPONSE_LEN, m[1] is the length of the serialized data. If such message is received,
- *   the receiver should perform another receive after that to receive m[1] elements corresponding to the serialized data
+ * - if m[0] == MPI_MESSAGE_STEAL_REQUEST, no other elements will be present.
+ * - if m[0] == MPI_MESSAGE_STEAL_RESPONSE_LEN_ROOTS, m[1] is the length of the serialized data. If such message is received,
+ *   the receiver should perform another receive after that to receive m[1] elements corresponding to the serialized roots chunk.
+ * - if m[0] == MPI_MESSAGE_STEAL_RESPONSE_LEN_SUBTREE, m[1] is the length of the serialized data. If such message is received,
+ *   the receiver should perform another receive after that to receive m[1] elements corresponding to the serialized subtree.
  * - if m[0] == MPI_MESSAGE_TERMINATION, no other elements will be present
  * - if m[0] == MPI_MESSAGE_STATS, m[1] will contain the cliques/kplexes count.
  **/
 typedef enum{
   MPI_MESSAGE_RANGE_REQUEST = 0,
   MPI_MESSAGE_RANGE_RESPONSE,
-  MPI_MESSAGE_SUBTREE_REQUEST,
-  MPI_MESSAGE_SUBTREE_RESPONSE_LEN,
+  MPI_MESSAGE_STEAL_REQUEST,
+  MPI_MESSAGE_STEAL_RESPONSE_LEN_ROOTS,
+  MPI_MESSAGE_STEAL_RESPONSE_LEN_SUBTREE,
   MPI_MESSAGE_TERMINATION,
   MPI_MESSAGE_STATS
 }MpiMessageType;
@@ -82,7 +85,7 @@ public:
     std::chrono::high_resolution_clock::time_point minimum = std::chrono::time_point<std::chrono::system_clock>::max();
     size_t toReturn = 0;
     for(size_t i = 0; i < _lastRequest.size(); i++){
-      if(_lastRequest[i] < minimum && _workersStates[i] != WORKER_STATE_SUBTREE_WAIT){
+      if(_lastRequest[i] < minimum && _workersStates[i] != WORKER_STATE_STEAL_WAIT){
         minimum = _lastRequest[i];
         toReturn = i;
       }
@@ -92,7 +95,7 @@ public:
 
   bool terminated(){
     for(size_t i = 0; i < _numWorkers; i++){
-      if(_workersStates[i] != WORKER_STATE_SUBTREE_WAIT){
+      if(_workersStates[i] != WORKER_STATE_STEAL_WAIT){
         return false;
       }
     }
@@ -117,7 +120,7 @@ public:
       range[2] = end;
       MPI_Send(range, 3, my_MPI_SIZE_T, status.MPI_SOURCE, 0, MPI_COMM_WORLD);
     }else{
-      _workersStates[stealerId] = WORKER_STATE_SUBTREE_WAIT;
+      _workersStates[stealerId] = WORKER_STATE_STEAL_WAIT;
       bool somethingSent = false;
 
       while(!somethingSent && !terminated()){
@@ -127,19 +130,20 @@ public:
         assert(victimId != stealerId);
         DEBUG(stealerId << " needs something and we try to steal from " << victimId);
 
-        size_t dummy = MPI_MESSAGE_SUBTREE_REQUEST;
+        size_t dummy = MPI_MESSAGE_STEAL_REQUEST;
         MPI_Send(&dummy, 1, my_MPI_SIZE_T, victimRank, 0, MPI_COMM_WORLD);
 
         size_t response[2];
         MPI_Recv(response, 2, my_MPI_SIZE_T, victimRank, 0, MPI_COMM_WORLD, &status);
         
-        if(response[0] == MPI_MESSAGE_SUBTREE_RESPONSE_LEN){
+        if(response[0] == MPI_MESSAGE_STEAL_RESPONSE_LEN_SUBTREE ||
+           response[0] == MPI_MESSAGE_STEAL_RESPONSE_LEN_ROOTS){
           // If subtree present, receive it.
           size_t subtreeLength = response[1];
           size_t* subtree = (size_t*) malloc(sizeof(size_t) * subtreeLength);
           MPI_Recv(subtree, subtreeLength, my_MPI_SIZE_T, victimRank, 0, MPI_COMM_WORLD, &status);
           size_t range[2];
-          range[0] = MPI_MESSAGE_SUBTREE_RESPONSE_LEN;
+          range[0] = response[0];
           range[1] = subtreeLength;
 
           DEBUG("Worker " << victimId << " provided a subtree serialized with an array of length " << subtreeLength);
@@ -149,10 +153,10 @@ public:
           free(subtree);
           somethingSent = true;
           DEBUG("Subtree sent");
-          _workersStates[stealerId] = WORKER_STATE_SUBTREE_PROCESSING;
+          _workersStates[stealerId] = WORKER_STATE_STEAL_PROCESSING;
         }else if(response[0] == MPI_MESSAGE_RANGE_REQUEST){
           DEBUG("The victim needs some data itself, we skip it (" << victimId << ")");
-          _workersStates[victimId] = WORKER_STATE_SUBTREE_WAIT;
+          _workersStates[victimId] = WORKER_STATE_STEAL_WAIT;
           _lastRequest[victimId] = std::chrono::high_resolution_clock::now();
         }else{
           throw std::runtime_error("Unexpected message.");
@@ -231,28 +235,33 @@ public:
 
     // In a loop to discard the possible steal request received while asking for more data.    
     size_t response[3];
-    response[0] = MPI_MESSAGE_SUBTREE_REQUEST;
-    while(response[0] == MPI_MESSAGE_SUBTREE_REQUEST){
+    response[0] = MPI_MESSAGE_STEAL_REQUEST;
+    while(response[0] == MPI_MESSAGE_STEAL_REQUEST){
       MPI_Send(&req, 1, my_MPI_SIZE_T, 0, 0, MPI_COMM_WORLD);
       MPI_Recv(response, 3, my_MPI_SIZE_T, 0, 0, MPI_COMM_WORLD, &status);
 
-      if(response[0] == MPI_MESSAGE_SUBTREE_RESPONSE_LEN){
+      if (response[0] == MPI_MESSAGE_STEAL_RESPONSE_LEN_ROOTS || 
+          response[0] == MPI_MESSAGE_STEAL_RESPONSE_LEN_SUBTREE) {
         // range[1] is the length of the subtree I'm going to receive.
         // Now I'll receive a subtree since roots are finished.
         size_t subtreeLength = response[1];
         size_t* subtree = (size_t*) malloc(sizeof(size_t) * subtreeLength);
         MPI_Recv(subtree, subtreeLength, my_MPI_SIZE_T, 0, 0, MPI_COMM_WORLD, &status);
-        mwd.info = MORE_WORK_SUBTREE;
+        if (response[0] == MPI_MESSAGE_STEAL_RESPONSE_LEN_ROOTS) {
+          mwd.info = MORE_WORK_ROOTS;
+        } else {
+          mwd.info = MORE_WORK_SUBTREE;
+        }
         mwd.subtree = subtree;
         mwd.subtreeLength = subtreeLength;      
-      }else if(response[0] == MPI_MESSAGE_RANGE_RESPONSE){
+      } else if(response[0] == MPI_MESSAGE_RANGE_RESPONSE) {
         mwd.info = MORE_WORK_RANGE;
         mwd.range.first = response[1];
         mwd.range.second = response[2];
-      }else if(response[0] == MPI_MESSAGE_TERMINATION){
+      } else if(response[0] == MPI_MESSAGE_TERMINATION) {
         DEBUG("Received termination message.");
         mwd.info = MORE_WORK_NOTHING;
-      }else if(response[0] != MPI_MESSAGE_SUBTREE_REQUEST){
+      } else if(response[0] != MPI_MESSAGE_STEAL_REQUEST) {
         throw std::runtime_error("Unexpected message.");
       }
     }
@@ -283,14 +292,18 @@ public:
     auto tmp = absl::make_unique<ParallelPthreadsSteal<Node, Item>>(_nthreads, mwd.range.first, mwd.range.second);
     MoreWork mr = std::bind(&Worker::GetMoreWork, this);
     CheckSteal cs = std::bind(&Worker::CheckStealRequest, this);
-    SendSteal ss = [&](std::vector<size_t>& serializedData){
+    SendSteal ss = [&](std::vector<size_t>& serializedData, bool areRoots){
       size_t dummy;
       MPI_Status status;
       MPI_Recv(&dummy, 1, my_MPI_SIZE_T, 0, 0, MPI_COMM_WORLD, &status);
-      assert(dummy == MPI_MESSAGE_SUBTREE_REQUEST);
+      assert(dummy == MPI_MESSAGE_STEAL_REQUEST);
       unsigned subtreeLength = serializedData.size();
       size_t msg[2];
-      msg[0] = MPI_MESSAGE_SUBTREE_RESPONSE_LEN;
+      if (areRoots) {
+        msg[0] = MPI_MESSAGE_STEAL_RESPONSE_LEN_ROOTS;
+      } else {
+        msg[0] = MPI_MESSAGE_STEAL_RESPONSE_LEN_SUBTREE;
+      }
       msg[1] = subtreeLength;
       MPI_Send(msg, 2, my_MPI_SIZE_T, 0, 0, MPI_COMM_WORLD);
       MPI_Send(serializedData.data(), subtreeLength, my_MPI_SIZE_T, 0, 0, MPI_COMM_WORLD);
