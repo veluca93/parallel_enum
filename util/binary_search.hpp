@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "util/dynarray.hpp"
+#include "util/serialize.hpp"
 
 template <typename T = uint32_t>
 class binary_search_t {
@@ -13,6 +14,10 @@ class binary_search_t {
  public:
   using data_type = dynarray<T>&;
   using iterator = const T*;
+
+  void Serialize(std::vector<size_t>* out) const { ::Serialize(support, out); }
+
+  void Deserialize(const size_t** in) { ::Deserialize(in, &support); }
 
   void init(const std::vector<T>& v) {
     support.resize(v.size());

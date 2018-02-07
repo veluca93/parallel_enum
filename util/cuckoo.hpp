@@ -9,6 +9,8 @@
 
 #include <immintrin.h>
 
+#include "util/serialize.hpp"
+
 template <typename T, T missing = T(-1),
 #ifdef __KNC__
           int bucket_size = 64 / sizeof(T)
@@ -25,6 +27,18 @@ class cuckoo_hash_set {
   using const_pointer = const value_type*;
   using difference_type = std::ptrdiff_t;
   using size_type = size_t;
+
+  void Serialize(std::vector<size_t>* out) const {
+    ::Serialize(mask, out);
+    ::Serialize(sz, out);
+    for (size_t i = 0; i < capacity(); i++) ::Serialize(ht[i], out);
+  }
+
+  void Deserialize(const size_t** in) {
+    ::Deserialize(in, &mask);
+    ::Deserialize(in, &sz);
+    for (size_t i = 0; i < capacity(); i++) ::Deserialize(in, &ht[i]);
+  }
 
  private:
   pointer ht{nullptr};
