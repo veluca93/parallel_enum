@@ -14,12 +14,14 @@
 #include "util/cuckoo.hpp"
 #include "util/dynarray.hpp"
 #include "util/fastio.hpp"
+#include "util/serialize.hpp"
 
 namespace graph_internal {
 
 template <typename node_t, typename label_t>
 class label_array_t {
  public:
+  label_array_t() {}  // For deserialization
   explicit label_array_t(node_t size) : data_(size) {}
 
   label_t& at(node_t pos) { return data_.at(pos); }
@@ -31,6 +33,9 @@ class label_array_t {
     }
     return new_labels;
   }
+  void Serialize(std::vector<size_t>* out) const { ::Serialize(data_, out); }
+
+  void Deserialize(const size_t** in) { ::Deserialize(in, &data_); }
 
  private:
   dynarray<label_t> data_;
@@ -39,11 +44,15 @@ class label_array_t {
 template <typename node_t>
 class label_array_t<node_t, void> {
  public:
+  label_array_t() {}  // For deserialization
   explicit label_array_t(node_t size) {}
   void at(node_t pos) const {}
   label_array_t Permute(const std::vector<node_t>& new_order) const {
     return *this;
   }
+  void Serialize(std::vector<size_t>* out) const {}
+
+  void Deserialize(const size_t** in) {}
 };
 
 template <typename node_t, typename label_t>
@@ -114,6 +123,7 @@ class graph_t {
   using labels_t = graph_internal::label_array_t<node_t, label_t>;
   using Builder = std::function<std::unique_ptr<graph_t>(node_t, const edges_t&,
                                                          const labels_t&)>;
+  graph_t() {}  // For deserialization
 
   graph_t(node_t N, const edges_t& edg, const labels_t& lbl)
       : N_(N), edges_(N), labels_(lbl) {
@@ -165,6 +175,18 @@ class graph_t {
   graph_t& operator=(graph_t&&) = delete;
   virtual ~graph_t() = default;
 
+  void Serialize(std::vector<size_t>* out) const {
+    ::Serialize(N_, out);
+    ::Serialize(edges_, out);
+    ::Serialize(labels_, out);
+  }
+
+  void Deserialize(const size_t** in) {
+    ::Deserialize(in, &N_);
+    ::Deserialize(in, &edges_);
+    ::Deserialize(in, &labels_);
+  }
+
  protected:
   node_t N_;
   std::vector<binary_search_t<node_t>> edges_;
@@ -179,16 +201,17 @@ class fast_graph_t : public graph_t<node_t_, label_t> {
   using node_t = node_t_;
   using edges_t = typename base_::edges_t;
   using labels_t = typename base_::labels_t;
+  fast_graph_t() {}  // For deserialization
   fast_graph_t(node_t N, const edges_t& edg, const labels_t& lbl)
       : base_(N, edg, lbl), edges_(N), fwd_iter_(N) {
     for (node_t i = 0; i < N; i++) {
       for (node_t x : edg[i]) edges_[i].insert(x);
-      fwd_iter_[i] = base_::neighs(i).upper_bound(i);
+      fwd_iter_[i] = base_::neighs(i).upper_bound(i) - base_::neighs(i).begin();
     }
   }
 
   const absl::Span<const node_t> fwd_neighs(node_t n) const {
-    auto beg = fwd_iter_[n];
+    auto beg = base_::neighs(n).begin() + fwd_iter_[n];
     auto end = base_::neighs(n).end();
     return absl::Span<const node_t>(beg, end - beg);
   }
@@ -215,10 +238,21 @@ class fast_graph_t : public graph_t<node_t_, label_t> {
     std::iota(identity.begin(), identity.end(), 0);
     return Permute(identity);
   }
+  void Serialize(std::vector<size_t>* out) const {
+    base_::Serialize(out);
+    ::Serialize(edges_, out);
+    ::Serialize(fwd_iter_, out);
+  }
+
+  void Deserialize(const size_t** in) {
+    base_::Deserialize(in);
+    ::Deserialize(in, &edges_);
+    ::Deserialize(in, &fwd_iter_);
+  }
 
  private:
   dynarray<cuckoo_hash_set<node_t>> edges_;
-  dynarray<typename binary_search_t<node_t>::iterator> fwd_iter_;
+  dynarray<size_t> fwd_iter_;
 };
 
 template <typename node_t = uint32_t, typename label_t = void,

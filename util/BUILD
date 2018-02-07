@@ -9,6 +9,7 @@ cc_library(
     name = "cuckoo",
     srcs = ["cuckoo.cpp"],
     hdrs = ["cuckoo.hpp"],
+    deps = [":serialize"],
 )
 
 cc_library(
@@ -26,6 +27,7 @@ cc_library(
         ":cuckoo",
         ":dynarray",
         ":fastio",
+        ":serialize",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/types:span",
     ],
@@ -46,11 +48,15 @@ cc_library(
     name = "binary_search",
     srcs = ["binary_search.cpp"],
     hdrs = ["binary_search.hpp"],
-    deps = [":dynarray"],
+    deps = [
+        ":dynarray",
+        ":serialize",
+    ],
 )
 
 cc_library(
     name = "dynarray",
     srcs = ["dynarray.cpp"],
     hdrs = ["dynarray.hpp"],
+    deps = [":serialize"],
 )

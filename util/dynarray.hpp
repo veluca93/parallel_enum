@@ -5,6 +5,8 @@
 #include <memory>
 #include <stdexcept>
 
+#include "util/serialize.hpp"
+
 template <class T>
 class dynarray {
  public:
@@ -106,6 +108,16 @@ class dynarray {
   friend void swap(dynarray<value_type>& a, dynarray<value_type>& b) {
     std::swap(a.store, b.store);
     std::swap(a.count, b.count);
+  }
+
+  void Serialize(std::vector<size_t>* out) const {
+    ::Serialize(count, out);
+    for (size_t i = 0; i < count; i++) ::Serialize(store[i], out);
+  }
+
+  void Deserialize(const size_t** in) {
+    ::Deserialize(in, &count);
+    for (size_t i = 0; i < count; i++) ::Deserialize(in, &store[i]);
   }
 
  private:
