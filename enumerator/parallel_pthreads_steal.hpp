@@ -113,10 +113,10 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
       char padding[64] = {};
       (void)padding;
 
-      std::function<bool(const Node&)> solution_cb = [this, &lnodes, &gnodes, &waiting, &stolen, &qSize, &id,
-                          system, &solution_cb, &rootsSize, &possibleRoots, &checkingSteal](const Node& node) {
-        bool offloadedNode = false;
+      // Returns true if we gave the node passed as parameter, false if we gave something else
+      auto ServeSteal = [&](const Node& node, bool useNode = true) {
         // Stealing management
+        bool offloadedNode = false;
         if (_checkStealCb) {
           if (!checkingSteal.test_and_set()) {
             if ((*_checkStealCb)()) {
@@ -134,7 +134,7 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
                   // Send roots
                   Serialize(rootsToSend, &serializedNode);
                   (*_sendStealCb)(serializedNode, true);
-              } else {
+              } else if (useNode) {
                 // Send subtree
 //#define STEAL_MULTIPLE_NODES            
 #ifdef STEAL_MULTIPLE_NODES
@@ -153,22 +153,28 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
                 } else {
                   std::vector<Node> toSerialize;
                   toSerialize.push_back(node);
-                  offloadedNode = true;
                   Serialize(toSerialize, &serializedNode);
                   (*_sendStealCb)(serializedNode, false);                
+                  offloadedNode = true;
                 }
 #else
+                std::vector<Node> toSerialize;
+                toSerialize.push_back(node);
+                Serialize(toSerialize, &serializedNode);
+                (*_sendStealCb)(serializedNode, false);                
                 offloadedNode = true;
-                Serialize(node, &serializedNode);
-                (*_sendStealCb)(serializedNode, false);
 #endif
               }
             }
             checkingSteal.clear();
           }
         }
+        return offloadedNode;
+      };
 
-        if (!offloadedNode) {
+      std::function<bool(const Node&)> solution_cb = [this, &lnodes, &gnodes, &waiting, &stolen, &qSize, &id,
+                          system, &solution_cb, &rootsSize, &possibleRoots, &checkingSteal, &ServeSteal](const Node& node) {
+        if (!ServeSteal(node)) {
           if (qSize < waiting) {
             gnodes.enqueue(node);
             ++qSize;
@@ -187,63 +193,63 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
         return true;
       };
 
-      while (!terminate) {
-        while (true) {
-          Node node;
-          bool nodeSet = false;
 
+      auto OpenRoot = [&]() {
+        size_t tmp;
+        if(possibleRoots.try_dequeue(tmp)){
+          --rootsSize;
+          system->GetRoot(tmp, solution_cb);
+          return true;
+        } else { 
+          return false;
+        }
+      };
+
+      while (!terminate) {
+        bool localData;
+        // In this loop we keep processing local data (local to this computing node, stealing from other threads if needed)
+        do {
+          localData = false;
           if (!lnodes.empty()) {
             // Pick from local nodes if available
+            Node node;
             node = std::move(lnodes.back());
             lnodes.pop_back();
-            nodeSet = true;
-          } else if (rootsSize) {
-            size_t tmp;
-            if(possibleRoots.try_dequeue(tmp)){
-              --rootsSize;
-              system->GetRoot(tmp, solution_cb);
-              if(!lnodes.empty()){
-                node = std::move(lnodes.back());
-                lnodes.pop_back();
-                nodeSet = true;
-              }
-            }
-          } else {
-            // Otherwise pick from global nodes
-            nodeSet = gnodes.try_dequeue(node);
-            if (!nodeSet) {
-              // If no nodes on the global queue, try to steal.
-              ++waiting;
-              do {
-                // std::this_thread::yield();
-                nodeSet = gnodes.try_dequeue(node);
-              } while (!nodeSet && (waiting + gwaiting) < (uint_fast32_t)_nthreads);
-
-              if (nodeSet) {
-                --waiting;
-                --qSize;
-              }
-            } else {
-              --qSize;
-            }
-          }
-
-
-          if (nodeSet) {
             system->ListChildren(node, solution_cb);
-          } else if (!rootsSize) {
-            break;  // No more local roots, try to grab from other computing
-                    // nodes (distributed)
+            localData = true;
+          } else if (rootsSize && OpenRoot()) {
+            localData = true;
           }
-        }
+
+          Node dummyNode;
+          ServeSteal(dummyNode, false); // TODO: Really useful?
+
+          // No local work, try to steal from other threads.
+          if (!localData) {
+            Node node;
+            ++waiting;
+            do {
+              // std::this_thread::yield();
+              localData = gnodes.try_dequeue(node);
+            } while (!localData && (waiting + gwaiting) < (uint_fast32_t) _nthreads);
+
+            if (localData) {
+              --waiting;
+              --qSize;
+              system->ListChildren(node, solution_cb);
+            } 
+          }
+        } while (localData);
+        // No more data to process, try to grab from other computing
+        // nodes (distributed)
 
         ++gwaiting;
         // Try to get more work.
         if (_moreWorkCb) {
-          if (id == 0) {
+          if (!checkingSteal.test_and_set()) {
             DEBUG("Invoking callback.");
-            pthread_barrier_wait(&barrier);
             MoreWorkData mwd = (*_moreWorkCb)();
+            pthread_barrier_wait(&barrier);
             waiting = 0;
             gwaiting = 0;
             qSize = 0;
@@ -267,19 +273,12 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
             } else if(mwd.info == MORE_WORK_SUBTREE) {
               const size_t* subtree = mwd.subtree;
 
-#ifdef STEAL_MULTIPLE_NODES
               std::vector<Node> deserializedNodes;
               Deserialize(&subtree, &deserializedNodes);
               for(auto dd : deserializedNodes){
                 gnodes.enqueue(dd);
               }
               qSize += deserializedNodes.size();
-#else
-              Node deserializedNode;
-              Deserialize(&subtree, &deserializedNode);
-              gnodes.enqueue(deserializedNode);
-              qSize += 1;
-#endif
 
               free(mwd.subtree);
             }else{
@@ -287,6 +286,8 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
             }
             pthread_barrier_wait(&barrier);
             DEBUG("Exiting barrier.");
+
+            checkingSteal.clear();
           } else {
             // Two barriers are needed: the first one to be sure
             // everyone is out of the first loop, the second one to be
