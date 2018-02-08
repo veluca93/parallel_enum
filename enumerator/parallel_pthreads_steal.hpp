@@ -225,9 +225,9 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
           }
         }
 
+        ++gwaiting;
         // Try to get more work.
         if (_moreWorkCb) {
-          ++gwaiting;
           if (id == 0) {
             DEBUG("Invoking callback.");
             MoreWorkData mwd = (*_moreWorkCb)();

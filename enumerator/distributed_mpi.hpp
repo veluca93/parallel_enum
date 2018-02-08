@@ -76,20 +76,22 @@ class Master {
   int _chunksPerNode;
   std::vector<WorkerState> _workersStates;
   std::vector<std::chrono::high_resolution_clock::time_point> _lastRequest;
+  size_t _lastStealVictim;
 public:
   Master(Enumerable<Node, Item>* system, size_t numWorkers, int chunksPerNode):
-    _system(system), _numWorkers(numWorkers), _chunksPerNode(chunksPerNode){;}
+    _system(system), _numWorkers(numWorkers), _chunksPerNode(chunksPerNode), _lastStealVictim(0){;}
 
   // Returns the worker id of the victim
   size_t GetStealVictim(){
     std::chrono::high_resolution_clock::time_point minimum = std::chrono::time_point<std::chrono::system_clock>::max();
     size_t toReturn = 0;
     for(size_t i = 0; i < _lastRequest.size(); i++){
-      if(_lastRequest[i] < minimum && _workersStates[i] != WORKER_STATE_STEAL_WAIT){
+      if(i != _lastStealVictim && _lastRequest[i] < minimum && _workersStates[i] != WORKER_STATE_STEAL_WAIT){
         minimum = _lastRequest[i];
         toReturn = i;
       }
     }
+    _lastStealVictim = toReturn;
     return toReturn;
   }
 
@@ -138,6 +140,12 @@ public:
         
         if(response[0] == MPI_MESSAGE_STEAL_RESPONSE_LEN_SUBTREE ||
            response[0] == MPI_MESSAGE_STEAL_RESPONSE_LEN_ROOTS){
+
+          if (response[0] == MPI_MESSAGE_STEAL_RESPONSE_LEN_SUBTREE) {
+            // To mitigate stealing when the victim is about to finish (no more roots available)
+            _lastRequest[victimId] = std::chrono::high_resolution_clock::now();
+          }
+
           // If subtree present, receive it.
           size_t subtreeLength = response[1];
           size_t* subtree = (size_t*) malloc(sizeof(size_t) * subtreeLength);
