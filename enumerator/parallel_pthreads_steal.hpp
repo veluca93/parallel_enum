@@ -93,7 +93,8 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
     std::atomic<uint_fast32_t> qSize{0};                      // Precise size of global queue
     std::atomic<uint_fast32_t> rootsSize{0};                  // Precise size of roots queue
     std::atomic<bool> terminate{false};
-  
+    std::atomic_flag checkingSteal = ATOMIC_FLAG_INIT;
+
     if (!_maxRootId) {
       _maxRootId = system->MaxRoots();
     }
@@ -113,46 +114,57 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
       (void)padding;
 
       std::function<bool(const Node&)> solution_cb = [this, &lnodes, &gnodes, &waiting, &stolen, &qSize, &id,
-                          system, &solution_cb, &rootsSize, &possibleRoots](const Node& node) {
+                          system, &solution_cb, &rootsSize, &possibleRoots, &checkingSteal](const Node& node) {
         bool offloadedNode = false;
         // Stealing management
-        if (id == 0 && _checkStealCb && (*_checkStealCb)()) {
-          std::vector<size_t> serializedNode;
-          std::vector<size_t> rootsToSend;
-          while(rootsSize && rootsToSend.size() < rootsSize /* && rootsSize > 10 */){
-            size_t tmp;
-            if(possibleRoots.try_dequeue(tmp)){
-              --rootsSize;
-              rootsToSend.push_back(tmp);
-            }
-          }
+        if (_checkStealCb) {
+          if (!checkingSteal.test_and_set()) {
+            if ((*_checkStealCb)()) {
+              std::vector<size_t> serializedNode;
+              std::vector<size_t> rootsToSend;
+              while(rootsSize && rootsToSend.size() < rootsSize /* && rootsSize > 10 */){
+                size_t tmp;
+                if(possibleRoots.try_dequeue(tmp)){
+                  --rootsSize;
+                  rootsToSend.push_back(tmp);
+                }
+              }
 
-          if(!rootsToSend.empty()){
-              // Send roots
-              Serialize(rootsToSend, &serializedNode);
-              (*_sendStealCb)(serializedNode, true);
-          } else {
-            // Send subtree
+              if(!rootsToSend.empty()){
+                  // Send roots
+                  Serialize(rootsToSend, &serializedNode);
+                  (*_sendStealCb)(serializedNode, true);
+              } else {
+                // Send subtree
 //#define STEAL_MULTIPLE_NODES            
 #ifdef STEAL_MULTIPLE_NODES
-            if (!lnodes.empty()) {
-              /*
-              std::vector<Node> toSerialize;
-              for(size_t i = 0; i < 10 && !lnodes.empty(); i++){
-                toSerialize.push_back(lnodes.back());
-                lnodes.pop_back();
-              }
-              Serialize(toSerialize, &serializedNode);
-              */
-              Serialize(lnodes, &serializedNode);
-              (*_sendStealCb)(serializedNode, false);
-              lnodes.clear();
-            } 
+                if (!lnodes.empty()) {
+                  /*
+                  std::vector<Node> toSerialize;
+                  for(size_t i = 0; i < 10 && !lnodes.empty(); i++){
+                    toSerialize.push_back(lnodes.back());
+                    lnodes.pop_back();
+                  }
+                  Serialize(toSerialize, &serializedNode);
+                  */
+                  Serialize(lnodes, &serializedNode);
+                  (*_sendStealCb)(serializedNode, false);
+                  lnodes.clear();
+                } else {
+                  std::vector<Node> toSerialize;
+                  toSerialize.push_back(node);
+                  offloadedNode = true;
+                  Serialize(toSerialize, &serializedNode);
+                  (*_sendStealCb)(serializedNode, false);                
+                }
 #else
-            offloadedNode = true;
-            Serialize(node, &serializedNode);
-            (*_sendStealCb)(serializedNode, false);
+                offloadedNode = true;
+                Serialize(node, &serializedNode);
+                (*_sendStealCb)(serializedNode, false);
 #endif
+              }
+            }
+            checkingSteal.clear();
           }
         }
 
@@ -230,8 +242,8 @@ class ParallelPthreadsSteal : public Enumerator<Node, Item> {
         if (_moreWorkCb) {
           if (id == 0) {
             DEBUG("Invoking callback.");
-            MoreWorkData mwd = (*_moreWorkCb)();
             pthread_barrier_wait(&barrier);
+            MoreWorkData mwd = (*_moreWorkCb)();
             waiting = 0;
             gwaiting = 0;
             qSize = 0;
