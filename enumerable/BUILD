@@ -45,15 +45,3 @@ cc_library(
         ":commutable",
     ],
 )
-
-cc_library(
-    name = "ckplex",
-    srcs = ["ckplex.cpp"],
-    hdrs = ["ckplex.hpp"],
-    deps = [
-        ":connected_hereditary",
-        ":enumerable",
-        "//permute",
-        "//util:graph",
-    ],
-)

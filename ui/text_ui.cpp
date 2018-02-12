@@ -1,5 +1,4 @@
 #include "absl/memory/memory.h"
-#include "enumerable/ckplex.hpp"
 #include "enumerable/clique.hpp"
 #include "enumerable/diam2kplex.hpp"
 //#include "enumerator/parallel_tbb.hpp"
@@ -23,15 +22,15 @@ DEFINE_int32(
                                               // renderlo valido solo in
                                               // caso di
                                               // enumerator=parallel
-DEFINE_int32(chunks_per_node, 100, "number of roots chunks "
+DEFINE_int32(chunks_per_node, 100,
+             "number of roots chunks "
              "to be scheduled to each computing node "
              "(only valid for distributed case) (default: 100)");
 DEFINE_int32(k, 2, "value of k for the k-plexes");
 DEFINE_int32(q, 1, "only find diam-2 kplexes at least this big");
 
-DEFINE_string(
-    system, "clique",
-    "what should be enumerated. Possible values: clique, ckplex, d2kplex");
+DEFINE_string(system, "clique",
+              "what should be enumerated. Possible values: clique, d2kplex");
 DEFINE_string(graph_format, "nde",
               "format of input graphs. Only makes sense for systems defined on "
               "graphs. Possible values: nde, oly");
@@ -53,7 +52,7 @@ bool ValidateEnumerator(const char* flagname, const std::string& value) {
 DEFINE_validator(enumerator, &ValidateEnumerator);
 
 bool ValidateSystem(const char* flagname, const std::string& value) {
-  if (value == "clique" || value == "ckplex" || value == "d2kplex") {
+  if (value == "clique" || value == "d2kplex") {
     return true;
   }
   printf("Invalid value for --%s: %s\n", flagname, value.c_str());
@@ -96,7 +95,8 @@ std::unique_ptr<Enumerator<Node, Item>> MakeEnumerator() {
     return absl::make_unique<ParallelPthreadsSteal<Node, Item>>(FLAGS_n);
   } else if (FLAGS_enumerator == "distributed") {
 #ifdef PARALLELENUM_USE_MPI
-    return absl::make_unique<DistributedMPI<Node, Item>>(FLAGS_n, FLAGS_chunks_per_node);
+    return absl::make_unique<DistributedMPI<Node, Item>>(FLAGS_n,
+                                                         FLAGS_chunks_per_node);
 #else
     throw std::runtime_error(
         "To run distributed version, run "
@@ -115,20 +115,6 @@ int CliqueMain(const std::string& input_file) {
   enumerator->ReadDone();
   enumerator->template MakeEnumerableSystemAndRun<
       CliqueEnumeration<fast_graph_t<node_t, void>>>(graph.get());
-  if (!FLAGS_quiet) {
-    enumerator->PrintStats();
-  }
-  return 0;
-}
-
-template <typename node_t>
-int CKplexMain(const std::string& input_file) {
-  auto enumerator =
-      MakeEnumerator<CKplexEnumerationNode<node_t>, CKplex<node_t>>();
-  auto graph = ReadFastGraph<node_t, void>(input_file);
-  enumerator->ReadDone();
-  enumerator->template MakeEnumerableSystemAndRun<
-      FastCKplexEnumeration<fast_graph_t<node_t, void>>>(graph.get(), FLAGS_k);
   if (!FLAGS_quiet) {
     enumerator->PrintStats();
   }
@@ -163,14 +149,6 @@ int main(int argc, char** argv) {
     }
     return FLAGS_huge_graph ? CliqueMain<uint64_t>(argv[1])
                             : CliqueMain<uint32_t>(argv[1]);
-  }
-  if (FLAGS_system == "ckplex") {
-    if (argc != 2) {
-      fprintf(stderr, "You should specify exactly one graph\n");
-      return 1;
-    }
-    return FLAGS_huge_graph ? CKplexMain<uint64_t>(argv[1])
-                            : CKplexMain<uint32_t>(argv[1]);
   }
   if (FLAGS_system == "d2kplex") {
     if (argc != 2) {
