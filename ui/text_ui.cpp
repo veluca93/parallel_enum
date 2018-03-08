@@ -1,4 +1,5 @@
 #include "absl/memory/memory.h"
+#include "enumerable/bccliques.hpp"
 #include "enumerable/clique.hpp"
 #include "enumerable/diam2kplex.hpp"
 //#include "enumerator/parallel_tbb.hpp"
@@ -22,15 +23,17 @@ DEFINE_int32(
                                               // renderlo valido solo in
                                               // caso di
                                               // enumerator=parallel
-DEFINE_int32(chunks_per_node, 100,
-             "number of roots chunks "
-             "to be scheduled to each computing node "
-             "(only valid for distributed case) (default: 100)");
+DEFINE_int32(
+    roots_per_node, 100,
+    "number of roots "
+    "to be scheduled to each computing node "
+    "(size of the chunk, only valid for distributed case) (default: 100)");
 DEFINE_int32(k, 2, "value of k for the k-plexes");
 DEFINE_int32(q, 1, "only find diam-2 kplexes at least this big");
 
 DEFINE_string(system, "clique",
-              "what should be enumerated. Possible values: clique, d2kplex");
+              "what should be enumerated. Possible values: clique, "
+              "d2kplex, bcclique");
 DEFINE_string(graph_format, "nde",
               "format of input graphs. Only makes sense for systems defined on "
               "graphs. Possible values: nde, oly");
@@ -52,7 +55,7 @@ bool ValidateEnumerator(const char* flagname, const std::string& value) {
 DEFINE_validator(enumerator, &ValidateEnumerator);
 
 bool ValidateSystem(const char* flagname, const std::string& value) {
-  if (value == "clique" || value == "d2kplex") {
+  if (value == "clique" || value == "d2kplex" || value == "bcclique") {
     return true;
   }
   printf("Invalid value for --%s: %s\n", flagname, value.c_str());
@@ -69,13 +72,30 @@ bool ValidateGraphFormat(const char* flagname, const std::string& value) {
 }
 DEFINE_validator(graph_format, &ValidateGraphFormat);
 
-template <typename node_t, typename label_t>
-std::unique_ptr<fast_graph_t<node_t, label_t>> ReadFastGraph(
+template <typename node_t>
+std::unique_ptr<fast_graph_t<node_t, void>> ReadFastGraph(
     const std::string& input_file, bool directed = false) {
   FILE* in = fopen(input_file.c_str(), "re");
   if (!in) throw std::runtime_error("Could not open " + input_file);
   if (FLAGS_graph_format == "nde") {
     return ReadNde<node_t, fast_graph_t>(in, directed);
+  }
+  if (FLAGS_graph_format == "oly") {
+    return FLAGS_fast_graph ? ReadOlympiadsFormat<node_t, void, fast_graph_t>(
+                                  in, directed, FLAGS_one_based)
+                            : ReadOlympiadsFormat<node_t, void, fast_graph_t>(
+                                  in, directed, FLAGS_one_based);
+  }
+  throw std::runtime_error("Invalid format");
+}
+
+template <typename node_t, typename label_t>
+std::unique_ptr<fast_graph_t<node_t, label_t>> ReadFastLabeledGraph(
+    const std::string& input_file, bool directed = false) {
+  FILE* in = fopen(input_file.c_str(), "re");
+  if (!in) throw std::runtime_error("Could not open " + input_file);
+  if (FLAGS_graph_format == "nde") {
+    throw std::runtime_error("NDE format has no label support");
   }
   if (FLAGS_graph_format == "oly") {
     return FLAGS_fast_graph
@@ -96,7 +116,7 @@ std::unique_ptr<Enumerator<Node, Item>> MakeEnumerator() {
   } else if (FLAGS_enumerator == "distributed") {
 #ifdef PARALLELENUM_USE_MPI
     return absl::make_unique<DistributedMPI<Node, Item>>(FLAGS_n,
-                                                         FLAGS_chunks_per_node);
+                                                         FLAGS_roots_per_node);
 #else
     throw std::runtime_error(
         "To run distributed version, run "
@@ -111,7 +131,7 @@ template <typename node_t>
 int CliqueMain(const std::string& input_file) {
   auto enumerator =
       MakeEnumerator<CliqueEnumerationNode<node_t>, Clique<node_t>>();
-  auto graph = ReadFastGraph<node_t, void>(input_file);
+  auto graph = ReadFastGraph<node_t>(input_file);
   enumerator->ReadDone();
   enumerator->template MakeEnumerableSystemAndRun<
       CliqueEnumeration<fast_graph_t<node_t, void>>>(graph.get());
@@ -122,10 +142,28 @@ int CliqueMain(const std::string& input_file) {
 }
 
 template <typename node_t>
+int BCCliqueMain(const std::string& input_file1,
+                 const std::string& input_file2) {
+  auto enumerator =
+      MakeEnumerator<BCCliqueEnumerationNode<uint64_t>, BCClique<uint64_t>>();
+  auto graph1 = ReadFastLabeledGraph<node_t, uint32_t>(input_file1);
+  auto graph2 = ReadFastLabeledGraph<node_t, uint32_t>(input_file2);
+  auto graph = absl::make_unique<product_graph_t<node_t, uint32_t>>(
+      std::move(graph1), std::move(graph2));
+  enumerator->ReadDone();
+  enumerator->template MakeEnumerableSystemAndRun<BCCliqueEnumeration<
+      typename std::remove_reference<decltype(*graph)>::type>>(graph.get());
+  if (!FLAGS_quiet) {
+    enumerator->PrintStats();
+  }
+  return 0;
+}
+
+template <typename node_t>
 int D2KplexMain(const std::string& input_file) {
   auto enumerator = MakeEnumerator<Diam2KplexNode<fast_graph_t<node_t, void>>,
                                    Kplex<node_t>>();
-  auto graph = ReadFastGraph<node_t, void>(input_file);
+  auto graph = ReadFastGraph<node_t>(input_file);
   enumerator->ReadDone();
   enumerator->template MakeEnumerableSystemAndRun<
       Diam2KplexEnumeration<fast_graph_t<node_t, void>>>(
@@ -157,5 +195,13 @@ int main(int argc, char** argv) {
     }
     return FLAGS_huge_graph ? D2KplexMain<uint64_t>(argv[1])
                             : D2KplexMain<uint32_t>(argv[1]);
+  }
+  if (FLAGS_system == "bcclique") {
+    if (argc != 3) {
+      fprintf(stderr, "You should specify exactly two graphs\n");
+      return 1;
+    }
+    return FLAGS_huge_graph ? BCCliqueMain<uint64_t>(argv[1], argv[2])
+                            : BCCliqueMain<uint32_t>(argv[1], argv[2]);
   }
 }

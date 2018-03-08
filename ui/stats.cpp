@@ -113,6 +113,8 @@ void Stats(const fast_graph_t<node_t>& graph, const std::string& order,
     if (cmp > big) big = cmp;
     tot += cmp;
   }
+  std::cout << pad << "  Total block size for " << order << " ordering: " << tot
+            << std::endl;
   std::cout << pad << "Maximum block size for " << order << " ordering: " << big
             << std::endl;
 }
@@ -157,7 +159,7 @@ int StatsMain(const std::string& input_file) {
   Stats(*graph, "natural", "   ");
   Stats(*graph->Permute(DegeneracyOrder(*graph)), "degeneracy", "");
   Stats(*graph->Permute(RandomOrder(*graph)), "random", "    ");
-  //TwoHopSz(*graph);
+  TwoHopSz(*graph);
   return 0;
 }
 

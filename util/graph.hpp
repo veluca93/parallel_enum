@@ -3,6 +3,7 @@
 
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <numeric>
 #include <type_traits>
 #include <unordered_map>
@@ -18,6 +19,16 @@
 #include "util/serialize.hpp"
 
 namespace graph_internal {
+
+struct pair_hash {
+  template <class T1, class T2>
+  std::size_t operator()(const std::pair<T1, T2>& p) const {
+    auto h1 = std::hash<T1>{}(p.first);
+    auto h2 = std::hash<T2>{}(p.second);
+    h1 ^= h2 + 0x9e3779b9 + (h1 << 6) + (h1 >> 2);
+    return h1;
+  }
+};
 
 template <typename node_t, typename label_t>
 class label_array_t {
@@ -254,6 +265,83 @@ class fast_graph_t : public graph_t<node_t_, label_t> {
  private:
   dynarray<cuckoo_hash_set<node_t>> edges_;
   dynarray<size_t> fwd_iter_;
+};
+
+template <typename node_t_ = uint32_t, typename label_t = uint32_t,
+          template <typename, typename> class Graph = fast_graph_t>
+class product_graph_t {
+ public:
+  using node_t = uint64_t;
+  using lgraph_t = Graph<node_t_, label_t>;
+  product_graph_t(const product_graph_t& oth)
+      : nds(oth.nds),
+        rmp(oth.rmp),
+        blkneigh(oth.blkneigh),
+        g1_(oth.g1_->Clone()),
+        g2_(oth.g2_->Clone()) {}
+  product_graph_t(std::unique_ptr<lgraph_t> g1, std::unique_ptr<lgraph_t> g2)
+      : g1_(std::move(g1)), g2_(std::move(g2)) {
+    std::unordered_map<label_t, std::vector<node_t>> g2_nodes;
+    for (node_t i = 0; i < g2_->size(); i++)
+      g2_nodes[g2_->label(i)].push_back(i);
+    for (node_t i = 0; i < g1_->size(); i++) {
+      for (auto second : g2_nodes[g1_->label(i)]) {
+        nds.emplace_back(i, second);
+        rmp[nds.back()] = nds.size() - 1;
+      }
+    }
+
+    blkneigh.resize(nds.size());
+    std::unordered_map<label_t, std::vector<node_t>> neighmap;
+    for (size_t node = 0; node < nds.size(); node++) {
+      for (node_t b : g2_->neighs(nds[node].second)) {
+        neighmap[g2_->label(b)].push_back(b);
+      }
+      for (auto a : g1_->neighs(nds[node].first)) {
+        for (auto b : neighmap[g1_->label(a)]) {
+          auto p = std::make_pair(a, b);
+          if (rmp.count(p) == 0) continue;
+          blkneigh[node].push_back(rmp.at(p));
+        }
+      }
+      for (node_t b : g2_->neighs(nds[node].second)) {
+        neighmap[g2_->label(b)].clear();
+      }
+    }
+  }
+
+  node_t size() const { return nds.size(); }
+
+  bool are_neighs(node_t a, node_t b) const {
+    return nds[a].first != nds[b].first && nds[a].second != nds[b].second &&
+           g1_->are_neighs(nds[a].first, nds[b].first) ==
+               g2_->are_neighs(nds[a].second, nds[b].second);
+  }
+
+  bool are_black_neighs(node_t a, node_t b) const {
+    bool ans = g1_->are_neighs(nds[a].first, nds[b].first) &&
+               g2_->are_neighs(nds[a].second, nds[b].second);
+    return ans;
+  }
+
+  const std::vector<node_t>& black_neighs(node_t node) const {
+    return blkneigh[node];
+  }
+
+  std::unique_ptr<product_graph_t> Clone() const {
+    return absl::make_unique<product_graph_t>(*this);
+  }
+
+ private:
+  std::vector<std::pair<node_t, node_t>> nds;
+  std::unordered_map<std::pair<node_t, node_t>, node_t,
+                     graph_internal::pair_hash>
+      rmp;
+
+  std::vector<std::vector<node_t>> blkneigh;
+
+  std::unique_ptr<lgraph_t> g1_;
+  std::unique_ptr<lgraph_t> g2_;
 };
 
 template <typename node_t = uint32_t, typename label_t = void,

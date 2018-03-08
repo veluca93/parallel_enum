@@ -45,3 +45,15 @@ cc_library(
         ":commutable",
     ],
 )
+
+cc_library(
+    name = "bccliques",
+    srcs = ["bccliques.cpp"],
+    hdrs = ["bccliques.hpp"],
+    deps = [
+        ":connected_hereditary",
+        ":enumerable",
+        "//permute",
+        "//util:graph",
+    ],
+)

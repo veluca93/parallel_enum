@@ -12,6 +12,7 @@ cc_binary(
     srcs = ["text_ui.cpp"],
     defines = MPI_DEFINES,
     deps = [
+        "//enumerable:bccliques",
         "//enumerable:clique",
         "//enumerable:diam2kplex",
         "//enumerator:distributed",

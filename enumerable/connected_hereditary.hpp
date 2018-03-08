@@ -16,6 +16,7 @@ class CHSystem : public CommutableSystem<Graph, Aux> {
   using node_t = typename Graph::node_t;
   virtual bool IsNeigh(node_t a, node_t b) = 0;
 
+  virtual absl::Span<const node_t> Neighs(node_t a) = 0;
   bool IsSeed(node_t v, const std::vector<node_t>* s) override final {
     return true;
   }
@@ -56,6 +57,9 @@ class CHSystem : public CommutableSystem<Graph, Aux> {
     q.emplace(0, seed);
     visited[seed_index] = true;
     thread_local std::vector<node_t> sorted;
+    thread_local std::unordered_map<node_t, size_t> idx;
+    idx.clear();
+    for (size_t i = 0; i < s.size(); i++) idx[s[i]] = i;
     sorted.clear();
     level.clear();
     while (!q.empty()) {
@@ -65,10 +69,19 @@ class CHSystem : public CommutableSystem<Graph, Aux> {
       int32_t lv = std::get<0>(p);
       sorted.push_back(el);
       level.push_back(lv);
-      for (size_t i = 0; i < s.size(); i++) {
-        if (!visited[i] && IsNeigh(el, s[i])) {
-          q.emplace(lv + 1, s[i]);
-          visited[i] = true;
+      if (Neighs(el).size() < s.size()) {
+        for (node_t n : Neighs(el)) {
+          if (idx.count(n) && !visited[idx[n]]) {
+            q.emplace(lv + 1, n);
+            visited[idx[n]] = true;
+          }
+        }
+      } else {
+        for (size_t i = 0; i < s.size(); i++) {
+          if (!visited[i] && IsNeigh(el, s[i])) {
+            q.emplace(lv + 1, s[i]);
+            visited[i] = true;
+          }
         }
       }
     }
