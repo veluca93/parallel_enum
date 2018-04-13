@@ -1,5 +1,5 @@
 # Building
-To build the project, just run the command ```./build.py```. It will ask if you want to build the project with the support for distributed memory, for example to run the code on a cluster of homogeneous interconnected computing nodes. If this is the case, please read the ["MPI"](MPI) section, otherwise you jump directly to the [Using](#Using) section.  
+To build the project, just run the command ```./build.py```. It will ask if you want to build the project with the support for distributed memory, for example to run the code on a cluster of homogeneous interconnected computing nodes. If this is the case, please read the ["MPI"](#mpi) section, otherwise you jump directly to the [Using](#using) section.  
 
 ## MPI
 MPI is the de-facto standard for implementing high performance applications running on a cluster of computing nodes. If you need to run the code on a cluster, while building the project you need to specify the path where MPI is installed. The build script will try to infer by itself the path where MPI is installed. If this path is wrong, you need to specify it manually. If you do not have MPI already installed on your machine, please install it before running the build script, for example by following [this](https://www.open-mpi.org/faq/?category=building#easy-build) guide. The script assumes that the folder you specified contains one  ```include``` subfolders containing the MPI headers and one ```lib``` subfolder containing the MPI library. If this is not the case, you may need to modify either the folder structure or the ```build.py``` script. The code was only tested with OpenMPI but should work with other MPI installations as well.
@@ -19,7 +19,7 @@ This executable accepts the following optional parameters:
 - -enumerator: This can assume one of the following values:
     - sequential: To run the code sequentially. This is the default value.
     - parallel: To run the code in parallel on a multicore computing node.
-    - distributed: To run the code on a cluster of multicore computing nodes. If you specify this value, please refer to the [Using with MPI](#Using-with-MPI) section for more information on how to run the code.
+    - distributed: To run the code on a cluster of multicore computing nodes. If you specify this value, please refer to the [Using with MPI](#using-with-mpi) section for more information on how to run the code.
 
 - -k: This is the k value for k-plex enumeration. By default it is set to 2.
 
