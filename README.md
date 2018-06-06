@@ -4,17 +4,25 @@ To build the project, just run the command ```./build.py```. It will ask if you 
 ## MPI
 MPI is the de-facto standard for implementing high performance applications running on a cluster of computing nodes. If you need to run the code on a cluster, while building the project you need to specify the path where MPI is installed. The build script will try to infer by itself the path where MPI is installed. If this path is wrong, you need to specify it manually. If you do not have MPI already installed on your machine, please install it before running the build script, for example by following [this](https://www.open-mpi.org/faq/?category=building#easy-build) guide. The script assumes that the folder you specified contains one  ```include``` subfolders containing the MPI headers and one ```lib``` subfolder containing the MPI library. If this is not the case, you may need to modify either the folder structure or the ```build.py``` script. The code was only tested with OpenMPI but should work with other MPI installations as well.
 
+# Graph format
+
+By default, the application accepts graphs in the NDE (Nodes-Degrees-Edges) format. 
+The graph file should have .nde extension and contain the following information:
+
+- The first line should contain the number of nodes.
+- Then, for each node, one line containing the index of the node and its degree.
+- Then, for each edge, one line containing the indices of its extremes.
+
 # Using
 To execute the code, you need to run the following executable file:
 ```
 ./bazel-bin/ui/text-ui graph.nde
 ```
 
-By default, the application accepts graphs in the NDE format. For more information about this format, please refer to [this](http://lasagne-unifi.sourceforge.net/content/userguide.html#zz-5.1) link.
 This executable accepts the following optional parameters:
 - -system: What should be enumerated. This can assume one of the following values:
     - clique: To enumerate maximal cliques. This is the default value.
-    - d2kplex: To enumerate maximal, diameter-2 k-plexes.
+    - d2kplex: To enumerate maximal, diameter-2 k-plexes (note, these include all maximal k-plexes of size at least 2k-1).
 
 - -enumerator: This can assume one of the following values:
     - sequential: To run the code sequentially. This is the default value.
@@ -28,8 +36,8 @@ This executable accepts the following optional parameters:
 - -n: Number of cores to use when enumerator=parallel. By default this is set to the number of cores available on the computing node.
 
 - -graph_format: The format of the graph provided in input. It can assume one of the following values:
-    - nde: This is the default format. For more information about this format, please refer to [this](http://lasagne-unifi.sourceforge.net/content/userguide.html#zz-5.1) link.
-    - oly
+    - nde: This is the default format. See the description above in Section [Graph format](#graph-format)
+    - oly: One line containing the number of nodes and the number of edges, then one line for each edge containing the indices of its extremes
 
 - -fast_graph: Use the faster but more memory hungry graph format. By default it is set to true.
 
