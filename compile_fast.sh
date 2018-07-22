@@ -1,8 +1,8 @@
 #!/bin/bash
 
-PROFILE_WITH="--system d2kplex  --k 2 --q 100 ../interdom.nde"
+PROFILE_WITH="--system d2kplex  --k 2 --q 100 interdom.nde"
 
-SRCS="./ui/text_ui.cpp ./permute/permute.cpp ./enumerable/clique.cpp ./enumerable/ckplex.cpp ./enumerable/diam2kplex.cpp ./util/graph.cpp ./util/cuckoo.cpp ./util/fastio.cpp ./util/dynarray.cpp ./util/binary_search.cpp"
+SRCS="./ui/text_ui.cpp ./permute/permute.cpp ./enumerable/clique.cpp ./enumerable/diam2kplex.cpp ./util/graph.cpp ./util/cuckoo.cpp ./util/fastio.cpp ./util/dynarray.cpp ./util/binary_search.cpp"
 
 GFLAG_SRCS="./bazel-parallel_enum/external/com_github_gflags_gflags/src/gflags.cc ./bazel-parallel_enum/external/com_github_gflags_gflags/src/gflags_reporting.cc ./bazel-parallel_enum/external/com_github_gflags_gflags/src/gflags_completions.cc"
 
