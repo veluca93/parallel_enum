@@ -16,7 +16,7 @@ The graph file should have .nde extension and contain the following information:
 # Using
 To execute the code, you need to run the following executable file:
 ```
-./bazel-bin/ui/text-ui graph.nde
+./bazel-bin/ui/text_ui graph.nde
 ```
 
 This executable accepts the following optional parameters:
@@ -53,7 +53,7 @@ This executable accepts the following optional parameters:
 For example, to count 3-plexes bigger than 2 on the 'graph.nde' graph, in parallel by using 10 cores, you should execute the following command:
 
 ```
-./bazel-bin/ui/text-ui -k 3 -q 2 -enumerator="parallel" -n 10 graph.nde 
+./bazel-bin/ui/text_ui -k 3 -q 2 -enumerator="parallel" -n 10 graph.nde 
 ```
 
 
@@ -80,7 +80,7 @@ After you built the ```hosts.txt``` file, you need to run the application by usi
 For example, to count 3-plexes bigger than 2 on the 'graph.nde' graph, by using 15 nodes of the cluster, each of which uses 10 cores, you should execute the following command:
 
 ```
-mpiexec --hostfile hosts.txt -np 15 ./bazel-bin/ui/text-ui -k 3 -q 2 -enumerator="distributed" -n 10 graph.nde 
+mpiexec --hostfile hosts.txt -np 15 ./bazel-bin/ui/text_ui -k 3 -q 2 -enumerator="distributed" -n 10 graph.nde 
 ```
 
 In a nutshell, you need to run the same command you would run in the sequential/parallel case, by replacing the ```distributed``` value for the ```enumerator``` flag and by prepending the command with ```mpiexec --hostfile hosts.txt -np 15``` where the value of the ```-np``` flag is the number of computing nodes you want to use.
