@@ -29,7 +29,7 @@ DEFINE_int32(chunks_per_node, 100,
 DEFINE_int32(k, 2, "value of k for the k-plexes");
 DEFINE_int32(q, 1, "only find diam-2 kplexes at least this big");
 
-DEFINE_string(system, "clique",
+DEFINE_string(system, "d2kplex",
               "what should be enumerated. Possible values: clique, d2kplex");
 DEFINE_string(graph_format, "nde",
               "format of input graphs. Only makes sense for systems defined on "
