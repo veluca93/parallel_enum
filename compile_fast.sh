@@ -1,6 +1,6 @@
 #!/bin/bash
 
-PROFILE_WITH="--system d2kplex  --k 2 --q 100 interdom.nde"
+#PROFILE_WITH="--system d2kplex  --k 2 --q 100 interdom.nde"
 
 SRCS="./ui/text_ui.cpp ./permute/permute.cpp ./enumerable/clique.cpp ./enumerable/diam2kplex.cpp ./util/graph.cpp ./util/cuckoo.cpp ./util/fastio.cpp ./util/dynarray.cpp ./util/binary_search.cpp"
 
@@ -14,12 +14,14 @@ OTHER="-DHAVE_STDINT_H -DHAVE_SYS_TYPES_H -DHAVE_INTTYPES_H -DHAVE_SYS_STAT_H -D
 
 OUTPUT=parallel_enum
 
-TEMP=$(mktemp)
+#TEMP=$(mktemp)
 
 set -x
 
-g++ -fprofile-generate ${OPTS} ${SRCS} ${GFLAG_SRCS} ${INCLUDES} ${OTHER} -o $TEMP
+g++ ${OPTS} ${SRCS} ${GFLAG_SRCS} ${INCLUDES} ${OTHER} -o $OUTPUT
 
-$TEMP $PROFILE_WITH
+#g++ -fprofile-generate ${OPTS} ${SRCS} ${GFLAG_SRCS} ${INCLUDES} ${OTHER} -o $TEMP
 
-g++ -fprofile-use ${OPTS} ${SRCS} ${GFLAG_SRCS} ${INCLUDES} ${OTHER} -o $OUTPUT
+#$TEMP $PROFILE_WITH
+
+#g++ -fprofile-use ${OPTS} ${SRCS} ${GFLAG_SRCS} ${INCLUDES} ${OTHER} -o $OUTPUT
