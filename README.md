@@ -21,8 +21,8 @@ To execute the code, you need to run the following executable file:
 
 This executable accepts the following optional parameters:
 - -system: What should be enumerated. This can assume one of the following values:
-    - clique: To enumerate maximal cliques. This is the default value.
-    - d2kplex: To enumerate maximal, diameter-2 k-plexes (note, these include all maximal k-plexes of size at least 2k-1).
+    - d2kplex: Default value. To enumerate maximal, diameter-2 k-plexes (these include all maximal k-plexes of size at least 2k-1).
+    - clique: To enumerate maximal cliques.
 
 - -enumerator: This can assume one of the following values:
     - sequential: To run the code sequentially. This is the default value.
