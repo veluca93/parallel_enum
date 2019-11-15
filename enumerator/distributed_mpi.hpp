@@ -2,11 +2,11 @@
 #define ENUMERATOR_DISTRIBUTED_MPI_H
 
 #include <limits.h>
+#include <mpi.h>
 #include <stdint.h>
 #include <chrono>
 #include <vector>
 #include "enumerator/parallel_pthreads_steal.hpp"
-#include "third_party/mpi/mpi.h"
 
 using namespace std::chrono;
 #undef DEBUG

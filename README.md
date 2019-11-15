@@ -1,13 +1,30 @@
 # Building
-To build the project, just run the command ```./build.py```. It will ask if you want to build the project with the support for distributed memory, for example to run the code on a cluster of homogeneous interconnected computing nodes. If this is the case, please read the ["MPI"](#mpi) section, otherwise you jump directly to the [Using](#using) section.  
+To build the project, just run the command ```./build.sh```. It will ask if you
+want to build the project with the support for distributed memory, for example
+to run the code on a cluster of homogeneous interconnected computing nodes. If
+this is the case, please read the ["MPI"](#mpi) section, otherwise you jump
+directly to the [Using](#using) section.
 
 ## MPI
-MPI is the de-facto standard for implementing high performance applications running on a cluster of computing nodes. If you need to run the code on a cluster, while building the project you need to specify the path where MPI is installed. The build script will try to infer by itself the path where MPI is installed. If this path is wrong, you need to specify it manually. If you do not have MPI already installed on your machine, please install it before running the build script, for example by following [this](https://www.open-mpi.org/faq/?category=building#easy-build) guide. The script assumes that the folder you specified contains one  ```include``` subfolders containing the MPI headers and one ```lib``` subfolder containing the MPI library. If this is not the case, you may need to modify either the folder structure or the ```build.py``` script. The code was only tested with OpenMPI but should work with other MPI installations as well.
+MPI is the de-facto standard for implementing high performance applications
+running on a cluster of computing nodes. If you need to run the code on a
+cluster, while building the project you need to specify the path where MPI is
+installed. The build script will try to infer by itself the path where MPI is
+installed. If this path is wrong, you need to specify it manually. If you do
+not have MPI already installed on your machine, please install it before
+running the build script, for example by following
+[this](https://www.open-mpi.org/faq/?category=building#easy-build) guide. The
+script assumes that the folder you specified contains one  ```include```
+subfolders containing the MPI headers and one ```lib``` subfolder containing
+the MPI library. If this is not the case, you may need to modify either the
+folder structure or the ```build.py``` script. The code was only tested with
+OpenMPI but should work with other MPI installations as well.
 
 # Graph format
 
-By default, the application accepts graphs in the NDE (Nodes-Degrees-Edges) format. 
-The graph file should have .nde extension and contain the following information:
+By default, the application accepts graphs in the NDE (Nodes-Degrees-Edges)
+format.  The graph file should have .nde extension and contain the following
+information:
 
 - The first line should contain the number of nodes.
 - Then, for each node, one line containing the index of the node and its degree.
@@ -15,8 +32,9 @@ The graph file should have .nde extension and contain the following information:
 
 # Using
 To execute the code, you need to run the following executable file:
+
 ```
-./bazel-bin/ui/text_ui graph.nde
+./build/text_ui graph.nde
 ```
 
 This executable accepts the following optional parameters:
@@ -53,12 +71,16 @@ This executable accepts the following optional parameters:
 For example, to count 3-plexes bigger than 2 on the 'graph.nde' graph, in parallel by using 10 cores, you should execute the following command:
 
 ```
-./bazel-bin/ui/text_ui -k 3 -q 2 -enumerator="parallel" -n 10 graph.nde 
+./build/text_ui -k 3 -q 2 -enumerator="parallel" -n 10 graph.nde
 ```
 
 
 ## Using with MPI
-To run this code on a cluster of nodes, first of all we assume that these nodes are using NFS so that all of them have the same directory structure. Before executing the code, you need to specify a ```hosts.txt``` file. For example, supposing that you have 32 nodes (from node00 to node031), the file should look like the following one:
+To run this code on a cluster of nodes, first of all we assume that these nodes
+are using NFS so that all of them have the same directory structure. Before
+executing the code, you need to specify a ```hosts.txt``` file. For example,
+supposing that you have 32 nodes (from node00 to node031), the file should look
+like the following one:
 
 ```
 node00 slots=1 max-slots=1
@@ -69,21 +91,35 @@ node030 slots=1 max-slots=1
 node031 slots=1 max-slots=1
 ```
 
-Basically, we have one row for each computing node. Each row has three space separated fields. The first field is the hostname of the node, while the second and third fields force MPI to run only one process for each node. This is needed to avoid oversubscription of the node, since each process will spawn multiple threads (a number of threads equal to the one specified through the ```-n``` parameter). 
+Basically, we have one row for each computing node. Each row has three space
+separated fields. The first field is the hostname of the node, while the second
+and third fields force MPI to run only one process for each node. This is
+needed to avoid oversubscription of the node, since each process will spawn
+multiple threads (a number of threads equal to the one specified through the
+```-n``` parameter).
 
-> ATTENTION: This is the format for OpenMPI installations. Other MPI versions should have a similar format. Please refer to the corresponding user manual to check how to force only one process for each node.
+> ATTENTION: This is the format for OpenMPI installations. Other MPI versions
+> should have a similar format. Please refer to the corresponding user manual
+> to check how to force only one process for each node.
 
-After you built the ```hosts.txt``` file, you need to run the application by using the ```mpiexec``` tool.
+After you built the ```hosts.txt``` file, you need to run the application by
+using the ```mpiexec``` tool.
 
 
 
-For example, to count 3-plexes bigger than 2 on the 'graph.nde' graph, by using 15 nodes of the cluster, each of which uses 10 cores, you should execute the following command:
+For example, to count 3-plexes bigger than 2 on the 'graph.nde' graph, by using
+15 nodes of the cluster, each of which uses 10 cores, you should execute the
+following command:
 
 ```
-mpiexec --hostfile hosts.txt -np 15 ./bazel-bin/ui/text_ui -k 3 -q 2 -enumerator="distributed" -n 10 graph.nde 
+mpiexec --hostfile hosts.txt -np 15 ./build/text_ui -k 3 -q 2 -enumerator="distributed" -n 10 graph.nde
 ```
 
-In a nutshell, you need to run the same command you would run in the sequential/parallel case, by replacing the ```distributed``` value for the ```enumerator``` flag and by prepending the command with ```mpiexec --hostfile hosts.txt -np 15``` where the value of the ```-np``` flag is the number of computing nodes you want to use.
+In a nutshell, you need to run the same command you would run in the
+sequential/parallel case, by replacing the ```distributed``` value for the
+```enumerator``` flag and by prepending the command with ```mpiexec --hostfile
+hosts.txt -np 15``` where the value of the ```-np``` flag is the number of
+computing nodes you want to use.
 
 
 

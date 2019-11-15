@@ -1,6 +1,6 @@
-bazel-*
 *.swp
 temp/
 files/
+build/
 __pycache__/
 .mypy_cache/
