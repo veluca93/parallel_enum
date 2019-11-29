@@ -55,7 +55,7 @@ This executable accepts the following optional parameters:
 
 - -graph_format: The format of the graph provided in input. It can assume one of the following values:
     - nde: This is the default format. See the description above in Section [Graph format](#graph-format)
-    - oly: One line containing the number of nodes and the number of edges, then one line for each edge containing the indices of its extremes
+    - oly: One line containing the number of nodes, then one line for each edge containing the indices of its extremes
 
 - -fast_graph: Use the faster but more memory hungry graph format. By default it is set to true.
 
