@@ -27,8 +27,16 @@ format.  The graph file should have .nde extension and contain the following
 information:
 
 - The first line should contain the number of nodes.
-- Then, for each node, one line containing the index of the node and its degree.
+- Then, for each node, one line containing the index of the node and its degree (indices should start from 0).
 - Then, for each edge, one line containing the indices of its extremes.
+- Numbers on the same line should be separated by space.
+
+The OLY format is also available by using the flag -graph_format="oly".
+In this case the graph file should have .oly extension and contain the following information:
+
+ - The first line should contain the number of nodes and edges.
+ - Then, for each edge, one line containing the indices of its extremes (indices should start from 0).
+ - Numbers on the same line should be separated by space.
 
 # Using
 To execute the code, you need to run the following executable file:
