@@ -53,9 +53,9 @@ This executable accepts the following optional parameters:
 
 - -n: Number of cores to use when enumerator=parallel. By default this is set to the number of cores available on the computing node.
 
-- -graph_format: The format of the graph provided in input. It can assume one of the following values:
+- -graph_format: The format of the graph provided in input. It can assume one of the following values (in both cases, node indices should start from 0):
     - nde: This is the default format. See the description above in Section [Graph format](#graph-format)
-    - oly: One line containing the number of nodes, then one line for each edge containing the indices of its extremes
+    - oly: One line containing the number of nodes and edges, then one line for each edge containing the indices of its extremes. 
 
 - -fast_graph: Use the faster but more memory hungry graph format. By default it is set to true.
 
