@@ -1,3 +1,15 @@
+# Contents
+
+This repository contains implementations of algorithms for maximal subgraph enumeration,
+including the algorithm for maximal cliques and the algorithm for k-plexes of diameter 2 (which include those of size at least 2k-1) appeared in:
+
+*ICALP16* - Sublinear-Space Bounded-Delay Enumeration for Massive Network Analytics: Maximal Cliques
+(ICALP 2016, https://drops.dagstuhl.de/opus/volltexte/2016/6292/ )
+
+
+*KDD18* - D2K: Scalable Community Detection in Massive Networks via Small-Diameter k-Plexes 
+(KDD 2018, https://dl.acm.org/citation.cfm?doid=3219819.3220093 )
+
 # Building
 To build the project, just run the command ```./build.sh```. It will ask if you
 want to build the project with the support for distributed memory, for example
@@ -47,8 +59,8 @@ To execute the code, you need to run the following executable file:
 
 This executable accepts the following optional parameters:
 - -system: What should be enumerated. This can assume one of the following values:
-    - d2kplex: Default value. To enumerate maximal, diameter-2 k-plexes (these include all maximal k-plexes of size at least 2k-1).
-    - clique: To enumerate maximal cliques.
+    - d2kplex: *Default value*. To enumerate maximal, diameter-2 k-plexes. These include all maximal k-plexes of size at least 2k-1 (this is the algorithm in *KDD18*).
+    - clique: To enumerate maximal cliques (this is the algorithm in *ICALP16*).
 
 - -enumerator: This can assume one of the following values:
     - sequential: To run the code sequentially. This is the default value.
