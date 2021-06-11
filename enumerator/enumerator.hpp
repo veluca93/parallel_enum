@@ -68,13 +68,13 @@ class Enumerator {
   // Call to have the solutions printed on stdout
   void PrintSolutionsOnStdout() {
 
-    std::function<void(const Item&)> print_cb =
-      [](const Item& item) {
-        for(auto n : item ){ printf("%lu ", (long unsigned) n); }
-        printf("\n");
-      };
-
-      SetItemFoundCallback(print_cb);
+    std::function<void(const Item&)> print_cb = [](const Item& item) {
+      std::string tmp; 
+      for (auto& i: item) {tmp += std::to_string(i) + " ";} 
+      printf("%s\n", tmp.c_str());
+    };
+ 
+     SetItemFoundCallback(print_cb);
   }
 
   virtual void ReportSolution(Enumerable<Node, Item>* system,
