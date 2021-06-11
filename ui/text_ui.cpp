@@ -40,6 +40,7 @@ DEFINE_bool(huge_graph, false, "use 64 bit integers to count nodes");
 DEFINE_bool(one_based, false,
             "whether the graph is one based. Used only by oly format.");
 DEFINE_bool(quiet, false, "do not show any non-fatal output");
+DEFINE_bool(print, false, "print the solutions on stdout");
 DEFINE_bool(enable_pivoting, true, "enable pivoting in d2kplex");
 
 bool ValidateEnumerator(const char* flagname, const std::string& value) {
@@ -111,6 +112,7 @@ template <typename node_t>
 int CliqueMain(const std::string& input_file) {
   auto enumerator =
       MakeEnumerator<CliqueEnumerationNode<node_t>, Clique<node_t>>();
+  if(FLAGS_print) enumerator->PrintSolutionsOnStdout();
   auto graph = ReadFastGraph<node_t, void>(input_file);
   enumerator->ReadDone();
   enumerator->template MakeEnumerableSystemAndRun<
@@ -125,6 +127,7 @@ template <typename node_t>
 int D2KplexMain(const std::string& input_file) {
   auto enumerator = MakeEnumerator<Diam2KplexNode<fast_graph_t<node_t, void>>,
                                    Kplex<node_t>>();
+  if(FLAGS_print) enumerator->PrintSolutionsOnStdout();
   auto graph = ReadFastGraph<node_t, void>(input_file);
   enumerator->ReadDone();
   enumerator->template MakeEnumerableSystemAndRun<
