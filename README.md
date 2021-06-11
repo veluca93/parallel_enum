@@ -47,7 +47,7 @@ The OLY format is also available by using the flag -graph_format="oly".
 In this case the graph file should have .oly extension and contain the following information:
 
  - The first line should contain the number of nodes and edges.
- - Then, for each edge, one line containing the indices of its extremes (indices should start from 0).
+ - Then, for each edge, one line containing the indices of its extremes (indices should start from 0, or from 1 if using the flag -one_based).
  - Numbers on the same line should be separated by space.
 
 # Using
@@ -84,6 +84,8 @@ This executable accepts the following optional parameters:
 - -one_based: Whether the graph is one based. Used only by oly format. By default it is set to false.
 
 - -quiet: Do not show any non-fatal output. By default it is set to false.
+
+- -print: Print the solutions one per line on stdout. Use with -quiet to print only the solutions.
 
 - -enable_pivoting: Enables pivoting in d2kplex. By default it is set to true.
 
