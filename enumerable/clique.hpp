@@ -24,14 +24,19 @@ class CliqueEnumeration
   using node_t = typename Graph::node_t;
   using NodeCallback = typename Enumerable<CliqueEnumerationNode<node_t>,
                                            Clique<node_t>>::NodeCallback;
-  explicit CliqueEnumeration(Graph* graph)
-      :graph_(
+
+  explicit CliqueEnumeration(Graph* graph) : graph_() {
 #ifndef DEGENERACY
-    graph->Clone()
+    graph_ = graph->Clone();
 #else
-    graph->Permute(DegeneracyOrder(*graph))
+    auto degen = DegeneracyOrder(*graph);
+    inverse_perm = degen;
+    for (int i = 0; i < degen.size(); i++) {
+      inverse_perm[i] = degen[i];
+    }
+    graph_ = graph->Permute(degen);
 #endif
-                ){}
+  }
 
   void SetUp() override {
     candidates_bitset_.resize(graph_->size());
@@ -112,7 +117,15 @@ class CliqueEnumeration
 
   Clique<node_t> NodeToItem(
       const CliqueEnumerationNode<node_t>& node) override {
+#ifdef DEGENERACY
+    Clique<node_t> inv_permuted(node.first.size());
+    for (int i = 0; i < node.first.size(); i++) {
+      inv_permuted[i] = inverse_perm[node.first[i]];
+    }
+    return inv_permuted;
+#else
     return node.first;
+#endif
   }
 
  private:
@@ -179,6 +192,9 @@ class CliqueEnumeration
   static thread_local std::vector<bool> bad_bitset_;
   static thread_local std::vector<node_t> bad_;
   std::unique_ptr<Graph> graph_;
+#ifdef DEGENERACY
+  std::vector<node_t> inverse_perm;
+#endif
 };
 
 template <typename Graph>
