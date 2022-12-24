@@ -489,18 +489,20 @@ class Diam2KplexEnumeration
   using NodeCallback =
       typename Enumerable<Diam2KplexNode<Graph>,
                           Kplex<typename Graph::node_t>>::NodeCallback;
+
   explicit Diam2KplexEnumeration(Graph* graph, size_t k, size_t q,
                                  bool enable_pivoting)
-      : graph_(
-#ifndef DEGENERACY
-            graph->Clone()
+      : graph_(), k_(k), q_(q), enable_pivoting_(enable_pivoting) {
+#ifdef DEGENERACY
+    auto degen = DegeneracyOrder(*graph);
+    inverse_perm = degen;
+    for (int i = 0; i < degen.size(); i++) {
+      inverse_perm[i] = degen[i];
+    }
+    graph_ = graph->Permute(degen);
 #else
-            graph->Permute(DegeneracyOrder(*graph))
+    graph_ = graph->Clone();
 #endif
-                ),
-        k_(k),
-        q_(q),
-        enable_pivoting_(enable_pivoting) {
   }
 
   void SetUp() override {}
@@ -510,7 +512,16 @@ class Diam2KplexEnumeration
   size_t MaxRoots() override { return graph_->size(); }
 
   Kplex<node_t> NodeToItem(const Diam2KplexNode<Graph>& node) override {
+#ifdef DEGENERACY
+    auto kp = ((const Diam2KplexEnumeration*)this)->NodeToItem(node);
+    Kplex<node_t> inv_permuted(kp.size());
+    for (int i = 0; i < kp.size(); i++) {
+      inv_permuted[i] = inverse_perm[kp[i]];
+    }
+    return inv_permuted;
+#else
     return ((const Diam2KplexEnumeration*)this)->NodeToItem(node);
+#endif
   }
 
   Kplex<node_t> NodeToItem(const Diam2KplexNode<Graph>& node) const {
@@ -537,25 +548,25 @@ class Diam2KplexEnumeration
     subgraph_added[v] = true;
     node.AddToSubgraph(v);
     std::vector<node_t> sg;
-    for (node_t n: graph_->fwd_neighs(v)) {
+    for (node_t n : graph_->fwd_neighs(v)) {
       sg.push_back(n);
       subgraph_added[n] = true;
     }
     auto filter_sg = [&](const std::vector<node_t>& sg) {
-        std::vector<node_t> filtered;
-        for (size_t i=0; i<sg.size(); i++) {
-            size_t count = 0;
-            for (size_t j=0; j<sg.size(); j++) {
-                if (graph_->are_neighs(sg[i], sg[j]))count++;
-            }
-            if (count +2*k_>= q_) filtered.push_back(sg[i]);
+      std::vector<node_t> filtered;
+      for (size_t i = 0; i < sg.size(); i++) {
+        size_t count = 0;
+        for (size_t j = 0; j < sg.size(); j++) {
+          if (graph_->are_neighs(sg[i], sg[j])) count++;
         }
-        return filtered;
+        if (count + 2 * k_ >= q_) filtered.push_back(sg[i]);
+      }
+      return filtered;
     };
     size_t sz;
     do {
-        sz = sg.size();
-        sg = filter_sg(sg);
+      sz = sg.size();
+      sg = filter_sg(sg);
     } while (sg.size() != sz);
     for (node_t n : sg) {
       node.AddToSubgraph(n);
@@ -580,7 +591,7 @@ class Diam2KplexEnumeration
       subgraph_candidates.clear();
     }
     for (node_t n : node.Subgraph()) subgraph_added[n] = false;
-    for (node_t n: graph_->fwd_neighs(v)) subgraph_added[n] = false;
+    for (node_t n : graph_->fwd_neighs(v)) subgraph_added[n] = false;
     node.Init(graph_.get(), k_);
     cb(node);
   }
@@ -597,6 +608,9 @@ class Diam2KplexEnumeration
   const size_t k_;
   const size_t q_;
   const bool enable_pivoting_;
+#ifdef DEGENERACY
+  std::vector<node_t> inverse_perm;
+#endif
 };
 
 extern template class Diam2KplexEnumeration<fast_graph_t<uint32_t, void>>;
